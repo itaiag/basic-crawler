@@ -23,7 +23,11 @@ var _creating := false
 var _inventory_open := false
 var _awaiting_quaff := false
 var _awaiting_close := false
+var _awaiting_wield := false
+var _awaiting_wear := false
 var _quaff_options: Array[int] = []
+var _wield_options: Array[int] = []
+var _wear_options: Array[int] = []
 var _create_bg: ColorRect
 var _create_label: RichTextLabel
 var _inv_bg: ColorRect
@@ -387,6 +391,24 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	if _awaiting_wield:
+		_handle_wield_input(event)
+		get_viewport().set_input_as_handled()
+		return
+
+	if _awaiting_wear:
+		_handle_wear_input(event)
+		get_viewport().set_input_as_handled()
+		return
+
+	if event.keycode == KEY_W:
+		if event.shift_pressed:
+			_try_wear()
+		else:
+			_try_wield()
+		get_viewport().set_input_as_handled()
+		return
+
 	if event.keycode == KEY_K:
 		_awaiting_kick = true
 		_add_message("Kick in which direction?")
@@ -483,6 +505,98 @@ func _do_close_action(dir: Vector2i) -> void:
 	_add_message("You close the door.")
 
 
+func _try_wield() -> void:
+	_wield_options.clear()
+	var seen := {}
+	for k in _player.inventory:
+		var kind: int = k
+		if GameData.is_weapon(kind) and not seen.has(kind):
+			seen[kind] = true
+			_wield_options.append(kind)
+	if _wield_options.is_empty():
+		_add_message("You have no weapons to wield.")
+		return
+	_add_message(_selection_prompt("Wield which weapon?", _wield_options))
+	_awaiting_wield = true
+
+
+func _handle_wield_input(event: InputEvent) -> void:
+	_awaiting_wield = false
+	if event.keycode == KEY_ESCAPE:
+		_add_message("Never mind.")
+		return
+	var idx: int = event.keycode - KEY_A
+	if idx >= 0 and idx < _wield_options.size():
+		var kind: int = _wield_options[idx]
+		_run_round(_do_wield_action.bind(kind))
+	else:
+		_add_message("Never mind.")
+
+
+func _do_wield_action(kind: int) -> void:
+	var iname: String = GameData.ITEMS[kind]["name"]
+	if GameData.is_two_handed(kind) and _player.equipped_shield >= 0:
+		_player.equipped_shield = -1
+		_add_message("You sling your shield to grip the %s with both hands." % iname)
+	_player.equipped_weapon = kind
+	_add_message("You wield the %s." % iname)
+
+
+func _try_wear() -> void:
+	_wear_options.clear()
+	var seen := {}
+	for k in _player.inventory:
+		var kind: int = k
+		if (GameData.is_armor(kind) or GameData.is_shield(kind)) and not seen.has(kind):
+			seen[kind] = true
+			_wear_options.append(kind)
+	if _wear_options.is_empty():
+		_add_message("You have no armor to wear.")
+		return
+	_add_message(_selection_prompt("Wear which armor?", _wear_options))
+	_awaiting_wear = true
+
+
+func _handle_wear_input(event: InputEvent) -> void:
+	_awaiting_wear = false
+	if event.keycode == KEY_ESCAPE:
+		_add_message("Never mind.")
+		return
+	var idx: int = event.keycode - KEY_A
+	if idx < 0 or idx >= _wear_options.size():
+		_add_message("Never mind.")
+		return
+	var kind: int = _wear_options[idx]
+	if GameData.is_shield(kind) and _player.equipped_weapon >= 0 \
+			and GameData.is_two_handed(_player.equipped_weapon):
+		_add_message("You can't use a shield with a two-handed weapon.")
+		return
+	_run_round(_do_wear_action.bind(kind))
+
+
+func _do_wear_action(kind: int) -> void:
+	var iname: String = GameData.ITEMS[kind]["name"]
+	if GameData.is_shield(kind):
+		_player.equipped_shield = kind
+		_add_message("You ready your %s." % iname)
+	else:
+		_player.equipped_armor = kind
+		_add_message("You don the %s." % iname)
+
+
+func _selection_prompt(label: String, options: Array[int]) -> String:
+	var prompt := label + "  "
+	for i in range(options.size()):
+		var kind: int = options[i]
+		prompt += "[%s] %s" % [char(97 + i), GameData.ITEMS[kind]["name"]]
+		var c := _count_item(kind)
+		if c > 1:
+			prompt += " (%d)" % c
+		prompt += "   "
+	prompt += "[Esc] cancel"
+	return prompt
+
+
 func _try_move(dir: Vector2i) -> void:
 	var target: Vector2i = _player.grid_pos + dir
 	if target.x < 0 or target.y < 0 or target.x >= GameData.MAP_W or target.y >= GameData.MAP_H:
@@ -556,7 +670,7 @@ func _attack_monster(m: Monster) -> void:
 	var total := d20 + net
 
 	if total >= target_ac:
-		var base_dmg: int = GameData.roll(int(_player.dmg_n), int(_player.dmg_d))
+		var base_dmg: int = GameData.roll(int(_player.weapon_dmg_n()), int(_player.weapon_dmg_d()))
 		var dmg := maxi(1, base_dmg + int(_player.damage_bonus()))
 		m.hp -= dmg
 		_add_message("You hit the %s!  [d20 %d %+d = %d vs AC %d]  -%d HP" %
@@ -678,6 +792,10 @@ func _spawn_items() -> void:
 			_place_item(room, _gold_item())
 		if randf() < 0.35:
 			_place_item(room, _potion_item())
+		if randf() < 0.20:
+			_place_item(room, _loot_item(_random_weapon_kind()))
+		if randf() < 0.15:
+			_place_item(room, _loot_item(_random_armor_kind()))
 	_renderer.queue_redraw()
 
 
@@ -701,6 +819,29 @@ func _gold_item() -> Dictionary:
 func _potion_item() -> Dictionary:
 	var data: Dictionary = GameData.ITEMS[GameData.ItemKind.HEALING_POTION]
 	return {"glyph": "!", "color": data["color"], "item": GameData.ItemKind.HEALING_POTION}
+
+
+func _loot_item(kind: int) -> Dictionary:
+	var data: Dictionary = GameData.ITEMS[kind]
+	return {"glyph": data["glyph"], "color": data["color"], "item": kind}
+
+
+func _random_weapon_kind() -> int:
+	var kinds: Array[int] = []
+	for kind in range(GameData.ITEMS.size()):
+		if GameData.is_weapon(kind):
+			kinds.append(kind)
+	var pick: int = kinds[randi() % kinds.size()]
+	return pick
+
+
+func _random_armor_kind() -> int:
+	var kinds: Array[int] = []
+	for kind in range(GameData.ITEMS.size()):
+		if GameData.is_armor(kind) or GameData.is_shield(kind):
+			kinds.append(kind)
+	var pick: int = kinds[randi() % kinds.size()]
+	return pick
 
 
 func _pickup_item(cell: Vector2i) -> void:

@@ -118,7 +118,23 @@ func wis_mod() -> int:
 
 
 func armor_class() -> int:
-	return ARMOR_AC + dex_mod()
+	var base := BASE_AC
+	if equipped_armor >= 0:
+		base = int(GameData.ITEMS[equipped_armor]["ac"])
+	var shield := SHIELD_AC if equipped_shield >= 0 else 0
+	return base + shield + dex_mod()
+
+
+func weapon_dmg_n() -> int:
+	if equipped_weapon >= 0:
+		return int(GameData.ITEMS[equipped_weapon]["dmg_n"])
+	return UNARMED_DMG_N
+
+
+func weapon_dmg_d() -> int:
+	if equipped_weapon >= 0:
+		return int(GameData.ITEMS[equipped_weapon]["dmg_d"])
+	return UNARMED_DMG_D
 
 
 func melee_attack_bonus() -> int:
