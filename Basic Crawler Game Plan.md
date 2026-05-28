@@ -41,10 +41,10 @@ There is already a ready Godot project in the folder. Use it.
 * The character will be controller by the keyboard arrows by default
 * Not like Nethack, the user will be able to see the dice rolls when attacking or saving. Not when looking for traps or secret doors. 
 * We will start with just a few monsters and we will add more later on
-    * S - Snake
-    * R - Rat
-    * s - Spider
-    * G - Goblin
+	* S - Snake
+	* R - Rat
+	* s - Spider
+	* G - Goblin
 
 ## Workflow
 * Separate the work to smaller stages. For examle, start with the random dungeon generator and then move to the next phases after I will check them.

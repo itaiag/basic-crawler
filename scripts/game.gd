@@ -7,6 +7,10 @@ var _dungeon := DungeonGenerator.new()
 var _turn := 1
 var _awaiting_kick := false
 
+var _monsters: Array[Monster] = []
+var _monster_at: Dictionary = {}
+var _last_visible: Dictionary = {}
+
 @onready var _renderer: Node2D = $DungeonRenderer
 @onready var _player: Node2D = $Player
 @onready var _camera: Camera2D = $Player/Camera
@@ -26,6 +30,7 @@ func _ready() -> void:
 	_player.position = GameData.grid_to_world(start)
 	_player.finished_moving.connect(_on_player_moved)
 
+	_spawn_monsters()
 	_update_fov()
 	_add_message("Welcome to the dungeon, adventurer!")
 	_add_message("[Debug] F5: new dungeon   F6: reveal map")
@@ -135,6 +140,12 @@ func _try_move(dir: Vector2i) -> void:
 	if target.x < 0 or target.y < 0 or target.x >= GameData.MAP_W or target.y >= GameData.MAP_H:
 		return
 
+	if _monster_at.has(target):
+		# Combat arrives in the next step; for now monsters are solid.
+		var m: Monster = _monster_at[target]
+		_add_message("A %s blocks your way." % GameData.MONSTERS[m.kind]["name"])
+		return
+
 	var tile: int = _dungeon.get_tile(target.x, target.y)
 
 	if tile == GameData.Tile.DOOR_CLOSED:
@@ -195,7 +206,9 @@ func _update_fov() -> void:
 			for x in range(room.position.x, room.end.x):
 				visible[Vector2i(x, y)] = true
 
+	_last_visible = visible
 	_renderer.update_visibility(visible)
+	_refresh_monster_visibility()
 
 
 func _regenerate() -> void:
@@ -206,6 +219,7 @@ func _regenerate() -> void:
 	_awaiting_kick = false
 	_turn = 1
 	_player.place_at(_dungeon.get_start_pos())
+	_spawn_monsters()
 	_update_fov()
 	_add_message("[Debug] Generated a new dungeon.")
 	_update_status()
@@ -213,10 +227,55 @@ func _regenerate() -> void:
 
 func _toggle_reveal() -> void:
 	_renderer.set_reveal_all(not _renderer.reveal_all)
+	_refresh_monster_visibility()
 	if _renderer.reveal_all:
 		_add_message("[Debug] Revealing the whole dungeon.")
 	else:
 		_add_message("[Debug] Fog of war restored.")
+
+
+func _spawn_monsters() -> void:
+	_clear_monsters()
+	for ri in range(1, _dungeon.rooms.size()):
+		var room: Rect2i = _dungeon.rooms[ri]
+		var n := randi_range(0, 2)
+		for _k in range(n):
+			var cell := _random_floor_cell(room)
+			if cell.x < 0:
+				continue
+			var kind := randi() % GameData.MONSTERS.size()
+			_add_monster(kind, cell)
+
+
+func _random_floor_cell(room: Rect2i) -> Vector2i:
+	for _t in range(10):
+		var x := randi_range(room.position.x, room.end.x - 1)
+		var y := randi_range(room.position.y, room.end.y - 1)
+		var cell := Vector2i(x, y)
+		if _dungeon.get_tile(x, y) == GameData.Tile.FLOOR and not _monster_at.has(cell):
+			return cell
+	return Vector2i(-1, -1)
+
+
+func _add_monster(kind: int, cell: Vector2i) -> void:
+	var m := Monster.new()
+	m.setup(kind, cell)
+	add_child(m)
+	_monsters.append(m)
+	_monster_at[cell] = m
+
+
+func _clear_monsters() -> void:
+	for m in _monsters:
+		m.queue_free()
+	_monsters.clear()
+	_monster_at.clear()
+
+
+func _refresh_monster_visibility() -> void:
+	var reveal: bool = _renderer.reveal_all
+	for m in _monsters:
+		m.visible = reveal or _last_visible.has(m.grid_pos)
 
 
 func _advance_turn() -> void:

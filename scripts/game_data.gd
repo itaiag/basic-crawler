@@ -25,6 +25,21 @@ const COLOR_CORRIDOR := Color(0.62, 0.62, 0.62)
 const COLOR_DOOR := Color(0.95, 0.78, 0.25)
 const COLOR_STAIRS := Color.WHITE
 
+enum MonsterKind { SNAKE, RAT, SPIDER, GOBLIN }
+
+# Stats follow easy-leaning Basic Fantasy values; combat fields are used in a
+# later step. Index matches MonsterKind.
+const MONSTERS := [
+	{"name": "snake", "glyph": "S", "color": Color(0.35, 0.80, 0.35),
+		"hp": 4, "ac": 13, "atk": 1, "dmg_n": 1, "dmg_d": 4, "xp": 8},
+	{"name": "rat", "glyph": "R", "color": Color(0.62, 0.45, 0.30),
+		"hp": 3, "ac": 12, "atk": 0, "dmg_n": 1, "dmg_d": 3, "xp": 4},
+	{"name": "spider", "glyph": "s", "color": Color(0.85, 0.85, 0.92),
+		"hp": 5, "ac": 13, "atk": 1, "dmg_n": 1, "dmg_d": 4, "xp": 10},
+	{"name": "goblin", "glyph": "G", "color": Color(0.60, 0.72, 0.25),
+		"hp": 6, "ac": 13, "atk": 1, "dmg_n": 1, "dmg_d": 6, "xp": 12},
+]
+
 static func get_tile_char(tile: int) -> String:
 	match tile:
 		Tile.WALL_H: return "-"
