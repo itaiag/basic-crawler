@@ -18,12 +18,17 @@ var xp := 0
 var level := 1
 var gold := 0
 var inventory: Array = []
+var fatigued := false
 
-# Fixed starting kit until the items stage: longsword (1d8), leather + shield.
-var dmg_n := 1
-var dmg_d := 8
-const ARMOR_AC := 14
 const HIT_DIE := 8
+const BASE_AC := 11
+const SHIELD_AC := 1
+const UNARMED_DMG_N := 1
+const UNARMED_DMG_D := 2
+
+var equipped_weapon := -1
+var equipped_armor := -1
+var equipped_shield := -1
 
 const MOVE_DURATION := 0.1
 
@@ -83,7 +88,15 @@ func roll_new_character() -> void:
 	level = 1
 	xp = 0
 	gold = 0
-	inventory.clear()
+	inventory = [
+		GameData.ItemKind.LONGSWORD,
+		GameData.ItemKind.LEATHER_ARMOR,
+		GameData.ItemKind.SHIELD,
+	]
+	equipped_weapon = GameData.ItemKind.LONGSWORD
+	equipped_armor = GameData.ItemKind.LEATHER_ARMOR
+	equipped_shield = GameData.ItemKind.SHIELD
+	fatigued = false
 	max_hp = maxi(1, HIT_DIE + con_mod())
 	hp = max_hp
 

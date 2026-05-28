@@ -4,6 +4,12 @@ const TOP_PANEL_H := 72
 const BOTTOM_PANEL_H := 60
 const ENGAGE_RANGE := 5
 
+# Rest/sleep tuning (per sleep-turn interruption chance).
+const SLEEP_TURNS := 15
+const REST_INTERRUPT_SAFE := 0.02
+const REST_INTERRUPT_OPEN := 0.15
+const FATIGUE_PENALTY := 2
+
 var _dungeon := DungeonGenerator.new()
 var _turn := 1
 var _awaiting_kick := false
@@ -16,6 +22,7 @@ var _items_at: Dictionary = {}
 var _creating := false
 var _inventory_open := false
 var _awaiting_quaff := false
+var _awaiting_close := false
 var _quaff_options: Array[int] = []
 var _create_bg: ColorRect
 var _create_label: RichTextLabel
@@ -134,6 +141,7 @@ func _begin_play() -> void:
 	_creating = false
 	_create_bg.visible = false
 	_add_message("Welcome to the dungeon, Adventurer the Human Fighter!")
+	_add_message("Commands: arrows move, k kick, c close door, i inventory, q quaff, R rest.")
 	_add_message("[Debug] F5: new dungeon   F6: reveal map")
 	_update_status()
 
@@ -256,6 +264,84 @@ func _do_quaff_action(kind: int) -> void:
 	_add_message("You quaff the %s.  You feel better!  (+%d HP)" % [data["name"], amount])
 
 
+func _try_rest() -> void:
+	if _engaged():
+		_add_message("You can't rest with enemies nearby.")
+		return
+	if _player.hp >= _player.max_hp and not _player.fatigued:
+		_add_message("You don't need to rest right now.")
+		return
+
+	var safe := _in_closed_room()
+	var chance := REST_INTERRUPT_SAFE if safe else REST_INTERRUPT_OPEN
+	var interrupted := false
+	for _i in range(SLEEP_TURNS):
+		_turn += 1
+		if randf() < chance:
+			interrupted = true
+			break
+
+	if interrupted:
+		_player.fatigued = true
+		var mname := _spawn_wandering_near_player()
+		if mname != "":
+			_add_message("A %s wanders in and wakes you!  You feel groggy." % mname)
+		else:
+			_add_message("Something disturbs your sleep.  You feel groggy.")
+	else:
+		var amount := maxi(1, GameData.roll(1, 8) + int(_player.con_mod()))
+		_player.heal(amount)
+		_player.fatigued = false
+		_add_message("You sleep%s and recover %d HP." % ["" if safe else " uneasily", amount])
+
+	_update_fov()
+	_update_status()
+
+
+func _in_closed_room() -> bool:
+	var ri := _dungeon.room_index_at(_player.grid_pos)
+	if ri < 0:
+		return false
+	var ring: Rect2i = _dungeon.rooms[ri].grow(1)
+	for x in range(ring.position.x, ring.end.x):
+		if _dungeon.get_tile(x, ring.position.y) == GameData.Tile.DOOR_OPEN:
+			return false
+		if _dungeon.get_tile(x, ring.end.y - 1) == GameData.Tile.DOOR_OPEN:
+			return false
+	for y in range(ring.position.y, ring.end.y):
+		if _dungeon.get_tile(ring.position.x, y) == GameData.Tile.DOOR_OPEN:
+			return false
+		if _dungeon.get_tile(ring.end.x - 1, y) == GameData.Tile.DOOR_OPEN:
+			return false
+	return true
+
+
+func _random_spawn_cell_near(center: Vector2i, min_r: int, max_r: int) -> Vector2i:
+	for _t in range(30):
+		var dx := randi_range(-max_r, max_r)
+		var dy := randi_range(-max_r, max_r)
+		var dist := absi(dx) + absi(dy)
+		if dist < min_r or dist > max_r:
+			continue
+		var cell := center + Vector2i(dx, dy)
+		if cell == _player.grid_pos or _monster_at.has(cell):
+			continue
+		if not GameData.is_passable(_dungeon.get_tile(cell.x, cell.y)):
+			continue
+		return cell
+	return Vector2i(-1, -1)
+
+
+func _spawn_wandering_near_player() -> String:
+	var cell := _random_spawn_cell_near(_player.grid_pos, 2, 5)
+	if cell.x < 0:
+		return ""
+	var kind := randi() % GameData.MONSTERS.size()
+	_add_monster(kind, cell)
+	var nm: String = GameData.MONSTERS[kind]["name"]
+	return nm
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey and event.pressed):
 		return
@@ -296,9 +382,20 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	if _awaiting_close:
+		_handle_close_input(event)
+		get_viewport().set_input_as_handled()
+		return
+
 	if event.keycode == KEY_K:
 		_awaiting_kick = true
 		_add_message("Kick in which direction?")
+		get_viewport().set_input_as_handled()
+		return
+
+	if event.keycode == KEY_C:
+		_awaiting_close = true
+		_add_message("Close which door?")
 		get_viewport().set_input_as_handled()
 		return
 
@@ -309,6 +406,11 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if event.keycode == KEY_Q:
 		_try_quaff()
+		get_viewport().set_input_as_handled()
+		return
+
+	if event.keycode == KEY_R:
+		_try_rest()
 		get_viewport().set_input_as_handled()
 		return
 
@@ -340,6 +442,45 @@ func _handle_kick_input(event: InputEvent) -> void:
 		_add_message("Never mind.")
 		return
 	_run_round(_do_kick_action.bind(dir))
+
+
+func _handle_close_input(event: InputEvent) -> void:
+	_awaiting_close = false
+	if event.keycode == KEY_ESCAPE:
+		_add_message("Never mind.")
+		return
+	var dir := _dir_from_key(event.keycode)
+	if dir == Vector2i.ZERO:
+		_add_message("Never mind.")
+		return
+
+	var target: Vector2i = _player.grid_pos + dir
+	var tile: int = _dungeon.get_tile(target.x, target.y)
+	if tile != GameData.Tile.DOOR_OPEN:
+		if tile == GameData.Tile.DOOR_CLOSED or tile == GameData.Tile.DOOR_LOCKED:
+			_add_message("That door is already closed.")
+		else:
+			_add_message("There is no open door there.")
+		return
+	if _monster_at.has(target):
+		var m: Monster = _monster_at[target]
+		_add_message("The %s is in the doorway." % GameData.MONSTERS[m.kind]["name"])
+		return
+
+	_run_round(_do_close_action.bind(dir))
+
+
+func _do_close_action(dir: Vector2i) -> void:
+	var target: Vector2i = _player.grid_pos + dir
+	# Re-validate: a monster may have stepped into the doorway if it won initiative.
+	if _dungeon.get_tile(target.x, target.y) != GameData.Tile.DOOR_OPEN:
+		return
+	if _monster_at.has(target):
+		var m: Monster = _monster_at[target]
+		_add_message("The %s blocks the doorway." % GameData.MONSTERS[m.kind]["name"])
+		return
+	_dungeon.set_tile(target.x, target.y, GameData.Tile.DOOR_CLOSED)
+	_add_message("You close the door.")
 
 
 func _try_move(dir: Vector2i) -> void:
@@ -409,20 +550,22 @@ func _attack_monster(m: Monster) -> void:
 	var mname: String = data["name"]
 	var target_ac: int = data["ac"]
 	var atk: int = _player.melee_attack_bonus()
+	var fatigue: int = FATIGUE_PENALTY if _player.fatigued else 0
+	var net := atk - fatigue
 	var d20 := randi_range(1, 20)
-	var total := d20 + atk
+	var total := d20 + net
 
 	if total >= target_ac:
 		var base_dmg: int = GameData.roll(int(_player.dmg_n), int(_player.dmg_d))
 		var dmg := maxi(1, base_dmg + int(_player.damage_bonus()))
 		m.hp -= dmg
-		_add_message("You hit the %s!  [d20 %d+%d=%d vs AC %d]  -%d HP" %
-			[mname, d20, atk, total, target_ac, dmg])
+		_add_message("You hit the %s!  [d20 %d %+d = %d vs AC %d]  -%d HP" %
+			[mname, d20, net, total, target_ac, dmg])
 		if m.hp <= 0:
 			_kill_monster(m, mname, int(data["xp"]))
 	else:
-		_add_message("You miss the %s.  [d20 %d+%d=%d vs AC %d]" %
-			[mname, d20, atk, total, target_ac])
+		_add_message("You miss the %s.  [d20 %d %+d = %d vs AC %d]" %
+			[mname, d20, net, total, target_ac])
 
 
 func _kill_monster(m: Monster, mname: String, xp_value: int) -> void:
@@ -470,6 +613,7 @@ func _regenerate() -> void:
 	_renderer.explored_cells.clear()
 	_awaiting_kick = false
 	_awaiting_quaff = false
+	_awaiting_close = false
 	_turn = 1
 	_player_alive = true
 	_player.place_at(_dungeon.get_start_pos())
@@ -712,8 +856,12 @@ func _update_status() -> void:
 	var lvl: int = _player.level
 	var xp: int = _player.xp
 	var gold: int = _player.gold
+	var fatigued: bool = _player.fatigued
 	_status.clear()
 	_status.append_text("Adventurer the Fighter     St:%d Dx:%d Co:%d In:%d Wi:%d Ch:%d     Lawful\n" %
 		[st, dx, co, intel, wi, cha])
-	_status.append_text("$:%d  HP:%d(%d)  Pw:0(0)  AC:%d  Exp:%d/%d  T:%d" %
-		[gold, maxi(0, hp), max_hp, ac, lvl, xp, _turn])
+	var line2 := "$:%d  HP:%d(%d)  Pw:0(0)  AC:%d  Exp:%d/%d  T:%d" % [
+		gold, maxi(0, hp), max_hp, ac, lvl, xp, _turn]
+	if fatigued:
+		line2 += "  Fatigued"
+	_status.append_text(line2)

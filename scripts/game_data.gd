@@ -41,16 +41,57 @@ const MONSTERS := [
 ]
 
 const COLOR_GOLD := Color(0.95, 0.85, 0.20)
+const COLOR_WEAPON := Color(0.70, 0.80, 0.85)
+const COLOR_ARMOR := Color(0.72, 0.60, 0.40)
 
-enum ItemKind { HEALING_POTION }
+enum ItemKind {
+	HEALING_POTION,
+	HAND_AXE, BATTLE_AXE, GREAT_AXE,
+	DAGGER, SHORTSWORD, LONGSWORD, TWO_HANDED_SWORD,
+	WARHAMMER, MACE, MAUL,
+	CLUB, QUARTERSTAFF, POLE_ARM, SPEAR,
+	LEATHER_ARMOR, CHAIN_MAIL, PLATE_MAIL,
+	SHIELD,
+}
 
+# Indexed by ItemKind; the row order must match the enum above.
 const ITEMS := [
 	{"name": "healing potion", "glyph": "!", "color": Color(0.50, 0.85, 0.95),
 		"category": "potion", "heal_n": 1, "heal_d": 8, "heal_bonus": 2},
+	{"name": "hand axe", "glyph": ")", "color": COLOR_WEAPON, "category": "weapon", "dmg_n": 1, "dmg_d": 6},
+	{"name": "battle axe", "glyph": ")", "color": COLOR_WEAPON, "category": "weapon", "dmg_n": 1, "dmg_d": 8},
+	{"name": "great axe", "glyph": ")", "color": COLOR_WEAPON, "category": "weapon", "dmg_n": 1, "dmg_d": 10, "two_handed": true},
+	{"name": "dagger", "glyph": ")", "color": COLOR_WEAPON, "category": "weapon", "dmg_n": 1, "dmg_d": 4},
+	{"name": "shortsword", "glyph": ")", "color": COLOR_WEAPON, "category": "weapon", "dmg_n": 1, "dmg_d": 6},
+	{"name": "longsword", "glyph": ")", "color": COLOR_WEAPON, "category": "weapon", "dmg_n": 1, "dmg_d": 8},
+	{"name": "two-handed sword", "glyph": ")", "color": COLOR_WEAPON, "category": "weapon", "dmg_n": 1, "dmg_d": 10, "two_handed": true},
+	{"name": "warhammer", "glyph": ")", "color": COLOR_WEAPON, "category": "weapon", "dmg_n": 1, "dmg_d": 6},
+	{"name": "mace", "glyph": ")", "color": COLOR_WEAPON, "category": "weapon", "dmg_n": 1, "dmg_d": 8},
+	{"name": "maul", "glyph": ")", "color": COLOR_WEAPON, "category": "weapon", "dmg_n": 1, "dmg_d": 10, "two_handed": true},
+	{"name": "club", "glyph": ")", "color": COLOR_WEAPON, "category": "weapon", "dmg_n": 1, "dmg_d": 4},
+	{"name": "quarterstaff", "glyph": ")", "color": COLOR_WEAPON, "category": "weapon", "dmg_n": 1, "dmg_d": 6, "two_handed": true},
+	{"name": "pole arm", "glyph": ")", "color": COLOR_WEAPON, "category": "weapon", "dmg_n": 1, "dmg_d": 10, "two_handed": true},
+	{"name": "spear", "glyph": ")", "color": COLOR_WEAPON, "category": "weapon", "dmg_n": 1, "dmg_d": 6},
+	{"name": "leather armor", "glyph": "[", "color": COLOR_ARMOR, "category": "armor", "ac": 13},
+	{"name": "chain mail", "glyph": "[", "color": COLOR_ARMOR, "category": "armor", "ac": 15},
+	{"name": "plate mail", "glyph": "[", "color": COLOR_ARMOR, "category": "armor", "ac": 17},
+	{"name": "shield", "glyph": "[", "color": COLOR_ARMOR, "category": "shield"},
 ]
 
 static func is_potion(kind: int) -> bool:
 	return ITEMS[kind].get("category", "") == "potion"
+
+static func is_weapon(kind: int) -> bool:
+	return ITEMS[kind].get("category", "") == "weapon"
+
+static func is_armor(kind: int) -> bool:
+	return ITEMS[kind].get("category", "") == "armor"
+
+static func is_shield(kind: int) -> bool:
+	return ITEMS[kind].get("category", "") == "shield"
+
+static func is_two_handed(kind: int) -> bool:
+	return ITEMS[kind].get("two_handed", false)
 
 static func get_tile_char(tile: int) -> String:
 	match tile:
