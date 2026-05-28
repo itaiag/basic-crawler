@@ -19,10 +19,10 @@ const MAP_H := 21
 const FONT_SIZE := 20
 const FOV_RADIUS := 8
 
-const COLOR_WALL := Color(0.78, 0.78, 0.78)
-const COLOR_FLOOR := Color(0.35, 0.35, 0.35)
-const COLOR_CORRIDOR := Color(0.55, 0.55, 0.55)
-const COLOR_DOOR := Color(0.85, 0.62, 0.13)
+const COLOR_WALL := Color(0.80, 0.50, 0.20)
+const COLOR_FLOOR := Color(0.42, 0.42, 0.42)
+const COLOR_CORRIDOR := Color(0.62, 0.62, 0.62)
+const COLOR_DOOR := Color(0.95, 0.78, 0.25)
 const COLOR_STAIRS := Color.WHITE
 
 static func get_tile_char(tile: int) -> String:

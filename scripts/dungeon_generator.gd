@@ -33,7 +33,9 @@ func generate(width: int, height: int, max_rooms: int = 8) -> void:
 
 		var valid := true
 		for existing in rooms:
-			if room.grow(2).intersects(existing):
+			# grow(3) keeps at least one empty cell between any two wall rings,
+			# which prevents adjacent walls rendering as a comb of connectors.
+			if room.grow(3).intersects(existing):
 				valid = false
 				break
 		if valid:
@@ -47,6 +49,9 @@ func generate(width: int, height: int, max_rooms: int = 8) -> void:
 	# Connect rooms with a minimum spanning tree (nearest-neighbour) so corridors
 	# stay short and there are no redundant parallel runs across the map.
 	_connect_mst()
+	# Add some mess on top of the guaranteed-connected backbone.
+	_add_extra_connections()
+	_add_dead_ends()
 
 	if rooms.size() >= 1:
 		var first: Rect2i = rooms[0]
@@ -144,6 +149,65 @@ func _connect_mst() -> void:
 		remaining.erase(best_r)
 
 
+func _add_extra_connections() -> void:
+	# A couple of redundant links create loops and corridors that cross.
+	if rooms.size() < 3:
+		return
+	var extra := randi_range(1, 3)
+	var tries := 0
+	while extra > 0 and tries < 40:
+		tries += 1
+		var i := randi() % rooms.size()
+		var j := randi() % rooms.size()
+		if i == j:
+			continue
+		var ra: Rect2i = rooms[i]
+		var rb: Rect2i = rooms[j]
+		_connect(ra, rb)
+		extra -= 1
+
+
+func _add_dead_ends() -> void:
+	var cells := _collect_corridor_cells()
+	if cells.is_empty():
+		return
+	var count := randi_range(3, 6)
+	for _k in range(count):
+		var start: Vector2i = cells[randi() % cells.size()]
+		_carve_dead_end(start)
+
+
+func _carve_dead_end(start: Vector2i) -> void:
+	# Wander through the void from an existing corridor; stop at a dead end and
+	# never breach a room (only carve empty space, pass through other corridors).
+	var pos := start
+	var length := randi_range(3, 9)
+	var dir: Vector2i = DIRS4[randi() % DIRS4.size()]
+	for _s in range(length):
+		if randf() < 0.35:
+			dir = DIRS4[randi() % DIRS4.size()]
+		var nxt: Vector2i = pos + dir
+		if nxt.x < 1 or nxt.y < 1 or nxt.x >= _width - 1 or nxt.y >= _height - 1:
+			break
+		var t: int = get_tile(nxt.x, nxt.y)
+		if t == GameData.Tile.NOTHING:
+			set_tile(nxt.x, nxt.y, GameData.Tile.CORRIDOR)
+			pos = nxt
+		elif t == GameData.Tile.CORRIDOR:
+			pos = nxt
+		else:
+			break
+
+
+func _collect_corridor_cells() -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	for y in range(_height):
+		for x in range(_width):
+			if get_tile(x, y) == GameData.Tile.CORRIDOR:
+				cells.append(Vector2i(x, y))
+	return cells
+
+
 func _connect(a: Rect2i, b: Rect2i) -> void:
 	var a_exits := _room_exits(a)
 	var b_exits := _room_exits(b)
@@ -176,7 +240,9 @@ func _connect(a: Rect2i, b: Rect2i) -> void:
 			found = cur
 			found_ok = true
 			break
-		for d in DIRS4:
+		var dirs := DIRS4.duplicate()
+		dirs.shuffle()
+		for d in dirs:
 			var step: Vector2i = d
 			var nxt: Vector2i = cur + step
 			if nxt.x < 0 or nxt.y < 0 or nxt.x >= _width or nxt.y >= _height:
