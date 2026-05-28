@@ -15,7 +15,7 @@ enum Tile {
 
 const CELL := Vector2i(16, 24)
 const MAP_W := 80
-const MAP_H := 40
+const MAP_H := 21
 const FONT_SIZE := 20
 const FOV_RADIUS := 8
 

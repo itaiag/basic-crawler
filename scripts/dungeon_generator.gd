@@ -9,7 +9,7 @@ var _width := 0
 var _height := 0
 
 
-func generate(width: int, height: int, max_rooms: int = 15) -> void:
+func generate(width: int, height: int, max_rooms: int = 8) -> void:
 	tiles.clear()
 	rooms.clear()
 	_width = width
@@ -25,8 +25,8 @@ func generate(width: int, height: int, max_rooms: int = 15) -> void:
 	for _i in range(max_rooms * 6):
 		if rooms.size() >= max_rooms:
 			break
-		var rw := randi_range(6, 12)
-		var rh := randi_range(4, 7)
+		var rw := randi_range(5, 11)
+		var rh := randi_range(3, 6)
 		var rx := randi_range(2, width - rw - 2)
 		var ry := randi_range(2, height - rh - 2)
 		var room := Rect2i(rx, ry, rw, rh)
@@ -44,11 +44,9 @@ func generate(width: int, height: int, max_rooms: int = 15) -> void:
 	for room in rooms:
 		_build_walls(room)
 
-	# Connect rooms in sequence with corridors routed entirely through the void.
-	for i in range(1, rooms.size()):
-		var prev: Rect2i = rooms[i - 1]
-		var cur: Rect2i = rooms[i]
-		_connect(prev, cur)
+	# Connect rooms with a minimum spanning tree (nearest-neighbour) so corridors
+	# stay short and there are no redundant parallel runs across the map.
+	_connect_mst()
 
 	if rooms.size() >= 1:
 		var first: Rect2i = rooms[0]
@@ -106,6 +104,44 @@ func _put_wall(x: int, y: int, tile: int) -> void:
 	# Corners stay as the WALL_H placed first; never overwrite floors or shared walls.
 	if get_tile(x, y) == GameData.Tile.NOTHING:
 		set_tile(x, y, tile)
+
+
+func _room_center(r: Rect2i) -> Vector2i:
+	return r.position + r.size / 2
+
+
+func _connect_mst() -> void:
+	if rooms.size() < 2:
+		return
+	var connected: Array[int] = [0]
+	var remaining: Array[int] = []
+	for i in range(1, rooms.size()):
+		remaining.append(i)
+
+	while not remaining.is_empty():
+		var best_c := -1
+		var best_r := -1
+		var best_d := INF
+		for ci in connected:
+			var c_idx: int = ci
+			var ca: Vector2i = _room_center(rooms[c_idx])
+			for ri in remaining:
+				var r_idx: int = ri
+				var cb: Vector2i = _room_center(rooms[r_idx])
+				var dx := float(ca.x - cb.x)
+				var dy := float(ca.y - cb.y)
+				var d := dx * dx + dy * dy
+				if d < best_d:
+					best_d = d
+					best_c = c_idx
+					best_r = r_idx
+		if best_r == -1:
+			break
+		var ra: Rect2i = rooms[best_c]
+		var rb: Rect2i = rooms[best_r]
+		_connect(ra, rb)
+		connected.append(best_r)
+		remaining.erase(best_r)
 
 
 func _connect(a: Rect2i, b: Rect2i) -> void:
