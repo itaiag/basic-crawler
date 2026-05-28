@@ -12,6 +12,15 @@ var _monsters: Array[Monster] = []
 var _monster_at: Dictionary = {}
 var _last_visible: Dictionary = {}
 var _player_alive := true
+var _items_at: Dictionary = {}
+var _creating := false
+var _inventory_open := false
+var _awaiting_quaff := false
+var _quaff_options: Array[int] = []
+var _create_bg: ColorRect
+var _create_label: RichTextLabel
+var _inv_bg: ColorRect
+var _inv_label: RichTextLabel
 
 @onready var _renderer: Node2D = $DungeonRenderer
 @onready var _player: Node2D = $Player
@@ -23,21 +32,20 @@ var _player_alive := true
 func _ready() -> void:
 	_dungeon.generate(GameData.MAP_W, GameData.MAP_H)
 	_renderer.dungeon = _dungeon
+	_renderer.items = _items_at
 
 	_setup_camera()
 	_setup_ui()
-
-	_player.roll_new_character()
+	_setup_overlays()
 
 	var start := _dungeon.get_start_pos()
 	_player.grid_pos = start
 	_player.position = GameData.grid_to_world(start)
 
 	_spawn_monsters()
+	_spawn_items()
 	_update_fov()
-	_add_message("Welcome to the dungeon, Adventurer the Human Fighter!")
-	_add_message("[Debug] F5: new dungeon   F6: reveal map")
-	_update_status()
+	_enter_creation()
 
 
 func _setup_camera() -> void:
@@ -81,6 +89,173 @@ func _setup_ui() -> void:
 	_status.add_theme_font_size_override("normal_font_size", 16)
 
 
+func _setup_overlays() -> void:
+	_create_bg = _new_overlay()
+	_create_label = _create_bg.get_child(0) as RichTextLabel
+	_inv_bg = _new_overlay()
+	_inv_label = _inv_bg.get_child(0) as RichTextLabel
+
+
+func _new_overlay() -> ColorRect:
+	var font := preload("res://resources/mono_font.tres")
+	var vp := get_viewport().get_visible_rect().size
+
+	var bg := ColorRect.new()
+	bg.color = Color.BLACK
+	bg.position = Vector2.ZERO
+	bg.size = vp
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.visible = false
+	$UI.add_child(bg)
+
+	var label := RichTextLabel.new()
+	label.bbcode_enabled = true
+	label.scroll_active = false
+	label.position = Vector2.ZERO
+	label.size = vp
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.add_theme_font_override("normal_font", font)
+	label.add_theme_font_override("bold_font", font)
+	label.add_theme_font_size_override("normal_font_size", 18)
+	label.add_theme_color_override("default_color", Color(0.9, 0.9, 0.9))
+	bg.add_child(label)
+	return bg
+
+
+func _enter_creation() -> void:
+	_creating = true
+	_player.roll_new_character()
+	_update_create_label()
+	_update_status()
+	_create_bg.visible = true
+
+
+func _begin_play() -> void:
+	_creating = false
+	_create_bg.visible = false
+	_add_message("Welcome to the dungeon, Adventurer the Human Fighter!")
+	_add_message("[Debug] F5: new dungeon   F6: reveal map")
+	_update_status()
+
+
+func _handle_create_input(event: InputEvent) -> void:
+	if event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
+		_begin_play()
+	elif event.keycode == KEY_R or event.keycode == KEY_SPACE:
+		_player.roll_new_character()
+		_update_create_label()
+		_update_status()
+
+
+func _update_create_label() -> void:
+	var st: int = _player.strength
+	var dx: int = _player.dexterity
+	var co: int = _player.constitution
+	var intel: int = _player.intelligence
+	var wi: int = _player.wisdom
+	var cha: int = _player.charisma
+	var hp: int = _player.max_hp
+	var ac: int = _player.armor_class()
+
+	var t := "\n\n\n\n[center][font_size=30][b]Create Your Character[/b][/font_size]\n\n"
+	t += "Human Fighter,  Lawful\n\n"
+	t += "St %2d (%+d)    Dx %2d (%+d)    Co %2d (%+d)\n" % [
+		st, GameData.ability_mod(st), dx, GameData.ability_mod(dx),
+		co, GameData.ability_mod(co)]
+	t += "In %2d (%+d)    Wi %2d (%+d)    Ch %2d (%+d)\n\n" % [
+		intel, GameData.ability_mod(intel), wi, GameData.ability_mod(wi),
+		cha, GameData.ability_mod(cha)]
+	t += "HP %d        AC %d\n\n\n" % [hp, ac]
+	t += "[ R ] Reroll          [ Enter ] Begin[/center]"
+	_create_label.text = t
+
+
+func _open_inventory() -> void:
+	_inventory_open = true
+	_update_inv_label()
+	_inv_bg.visible = true
+
+
+func _update_inv_label() -> void:
+	var gold: int = _player.gold
+	var inv: Array = _player.inventory
+	var t := "\n\n\n\n[center][font_size=30][b]Inventory[/b][/font_size]\n\n"
+	t += "Gold:  %d\n\n" % gold
+	if inv.is_empty():
+		t += "(carrying nothing else)\n"
+	else:
+		var counts := {}
+		for k in inv:
+			counts[k] = int(counts.get(k, 0)) + 1
+		var idx := 0
+		for k in counts.keys():
+			var kind: int = k
+			var c: int = counts[k]
+			var iname: String = GameData.ITEMS[kind]["name"]
+			if c != 1:
+				iname += "s"
+			t += "%s)  %d  %s\n" % [char(97 + idx), c, iname]
+			idx += 1
+	t += "\n\n[ any key ] close[/center]"
+	_inv_label.text = t
+
+
+func _try_quaff() -> void:
+	# Build a menu of the distinct potions carried; non-potions are excluded.
+	_quaff_options.clear()
+	var seen := {}
+	for k in _player.inventory:
+		var kind: int = k
+		if GameData.is_potion(kind) and not seen.has(kind):
+			seen[kind] = true
+			_quaff_options.append(kind)
+
+	if _quaff_options.is_empty():
+		_add_message("You have no potions to quaff.")
+		return
+
+	var prompt := "Quaff which potion?  "
+	for i in range(_quaff_options.size()):
+		var kind: int = _quaff_options[i]
+		prompt += "[%s] %s" % [char(97 + i), GameData.ITEMS[kind]["name"]]
+		var c := _count_item(kind)
+		if c > 1:
+			prompt += " (%d)" % c
+		prompt += "   "
+	prompt += "[Esc] cancel"
+	_add_message(prompt)
+	_awaiting_quaff = true
+
+
+func _handle_quaff_input(event: InputEvent) -> void:
+	_awaiting_quaff = false
+	if event.keycode == KEY_ESCAPE:
+		_add_message("Never mind.")
+		return
+	var idx: int = event.keycode - KEY_A
+	if idx >= 0 and idx < _quaff_options.size():
+		var kind: int = _quaff_options[idx]
+		_run_round(_do_quaff_action.bind(kind))
+	else:
+		_add_message("Never mind.")
+
+
+func _count_item(kind: int) -> int:
+	var c := 0
+	for k in _player.inventory:
+		if int(k) == kind:
+			c += 1
+	return c
+
+
+func _do_quaff_action(kind: int) -> void:
+	var data: Dictionary = GameData.ITEMS[kind]
+	_player.remove_item(kind)
+	var amount := GameData.roll(int(data["heal_n"]), int(data["heal_d"])) + int(data["heal_bonus"])
+	_player.heal(amount)
+	_add_message("You quaff the %s.  You feel better!  (+%d HP)" % [data["name"], amount])
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey and event.pressed):
 		return
@@ -91,6 +266,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.keycode == KEY_F6:
 		_toggle_reveal()
+		get_viewport().set_input_as_handled()
+		return
+
+	if _creating:
+		_handle_create_input(event)
+		get_viewport().set_input_as_handled()
+		return
+
+	if _inventory_open:
+		_inventory_open = false
+		_inv_bg.visible = false
 		get_viewport().set_input_as_handled()
 		return
 
@@ -105,9 +291,24 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	if _awaiting_quaff:
+		_handle_quaff_input(event)
+		get_viewport().set_input_as_handled()
+		return
+
 	if event.keycode == KEY_K:
 		_awaiting_kick = true
 		_add_message("Kick in which direction?")
+		get_viewport().set_input_as_handled()
+		return
+
+	if event.keycode == KEY_I:
+		_open_inventory()
+		get_viewport().set_input_as_handled()
+		return
+
+	if event.keycode == KEY_Q:
+		_try_quaff()
 		get_viewport().set_input_as_handled()
 		return
 
@@ -177,6 +378,8 @@ func _do_move_action(dir: Vector2i) -> void:
 
 	if GameData.is_passable(tile):
 		_player.move_to(target)
+		if _items_at.has(target):
+			_pickup_item(target)
 		if tile == GameData.Tile.STAIRS_DOWN:
 			_add_message("There is a staircase down here.")
 		elif tile == GameData.Tile.STAIRS_UP:
@@ -266,14 +469,14 @@ func _regenerate() -> void:
 	_renderer.visible_cells.clear()
 	_renderer.explored_cells.clear()
 	_awaiting_kick = false
+	_awaiting_quaff = false
 	_turn = 1
 	_player_alive = true
-	_player.roll_new_character()
 	_player.place_at(_dungeon.get_start_pos())
 	_spawn_monsters()
+	_spawn_items()
 	_update_fov()
-	_add_message("[Debug] Generated a new dungeon.")
-	_update_status()
+	_enter_creation()
 
 
 func _toggle_reveal() -> void:
@@ -321,6 +524,53 @@ func _clear_monsters() -> void:
 		m.queue_free()
 	_monsters.clear()
 	_monster_at.clear()
+
+
+func _spawn_items() -> void:
+	_items_at.clear()
+	for ri in range(_dungeon.rooms.size()):
+		var room: Rect2i = _dungeon.rooms[ri]
+		if randf() < 0.5:
+			_place_item(room, _gold_item())
+		if randf() < 0.35:
+			_place_item(room, _potion_item())
+	_renderer.queue_redraw()
+
+
+func _place_item(room: Rect2i, item: Dictionary) -> void:
+	for _t in range(10):
+		var x := randi_range(room.position.x, room.end.x - 1)
+		var y := randi_range(room.position.y, room.end.y - 1)
+		var cell := Vector2i(x, y)
+		if _dungeon.get_tile(x, y) != GameData.Tile.FLOOR:
+			continue
+		if _items_at.has(cell) or _monster_at.has(cell):
+			continue
+		_items_at[cell] = item
+		return
+
+
+func _gold_item() -> Dictionary:
+	return {"glyph": "$", "color": GameData.COLOR_GOLD, "gold": randi_range(2, 30)}
+
+
+func _potion_item() -> Dictionary:
+	var data: Dictionary = GameData.ITEMS[GameData.ItemKind.HEALING_POTION]
+	return {"glyph": "!", "color": data["color"], "item": GameData.ItemKind.HEALING_POTION}
+
+
+func _pickup_item(cell: Vector2i) -> void:
+	var it: Dictionary = _items_at[cell]
+	_items_at.erase(cell)
+	if it.has("gold"):
+		var amount: int = it["gold"]
+		_player.add_gold(amount)
+		_add_message("You pick up %d gold piece%s." % [amount, "" if amount == 1 else "s"])
+	else:
+		var kind: int = it["item"]
+		_player.add_item(kind)
+		_add_message("You pick up a %s." % GameData.ITEMS[kind]["name"])
+	_renderer.queue_redraw()
 
 
 func _refresh_monster_visibility() -> void:
@@ -461,8 +711,9 @@ func _update_status() -> void:
 	var ac: int = _player.armor_class()
 	var lvl: int = _player.level
 	var xp: int = _player.xp
+	var gold: int = _player.gold
 	_status.clear()
 	_status.append_text("Adventurer the Fighter     St:%d Dx:%d Co:%d In:%d Wi:%d Ch:%d     Lawful\n" %
 		[st, dx, co, intel, wi, cha])
-	_status.append_text("$:0  HP:%d(%d)  Pw:0(0)  AC:%d  Exp:%d/%d  T:%d" %
-		[maxi(0, hp), max_hp, ac, lvl, xp, _turn])
+	_status.append_text("$:%d  HP:%d(%d)  Pw:0(0)  AC:%d  Exp:%d/%d  T:%d" %
+		[gold, maxi(0, hp), max_hp, ac, lvl, xp, _turn])

@@ -1,6 +1,7 @@
 extends Node2D
 
 var dungeon: DungeonGenerator
+var items: Dictionary = {}
 var visible_cells: Dictionary = {}
 var explored_cells: Dictionary = {}
 var reveal_all := false
@@ -41,6 +42,16 @@ func _draw() -> void:
 
 			var tile: int = dungeon.get_tile(x, y)
 			if tile == GameData.Tile.NOTHING:
+				continue
+
+			# Items sit on top of the floor and are remembered once explored.
+			if items.has(pos):
+				var it: Dictionary = items[pos]
+				var icolor: Color = it["color"]
+				if not reveal_all and not visible_cells.has(pos):
+					icolor = icolor.darkened(0.6)
+				draw_string(_font, Vector2(x * cx, y * cy + ascent), it["glyph"],
+					HORIZONTAL_ALIGNMENT_CENTER, float(cx), fs, icolor)
 				continue
 
 			var color := GameData.get_tile_color(tile)

@@ -40,6 +40,18 @@ const MONSTERS := [
 		"hp": 6, "ac": 13, "atk": 1, "dmg_n": 1, "dmg_d": 6, "xp": 12},
 ]
 
+const COLOR_GOLD := Color(0.95, 0.85, 0.20)
+
+enum ItemKind { HEALING_POTION }
+
+const ITEMS := [
+	{"name": "healing potion", "glyph": "!", "color": Color(0.50, 0.85, 0.95),
+		"category": "potion", "heal_n": 1, "heal_d": 8, "heal_bonus": 2},
+]
+
+static func is_potion(kind: int) -> bool:
+	return ITEMS[kind].get("category", "") == "potion"
+
 static func get_tile_char(tile: int) -> String:
 	match tile:
 		Tile.WALL_H: return "-"

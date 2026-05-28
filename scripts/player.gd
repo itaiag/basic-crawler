@@ -16,6 +16,8 @@ var hp := 8
 var max_hp := 8
 var xp := 0
 var level := 1
+var gold := 0
+var inventory: Array = []
 
 # Fixed starting kit until the items stage: longsword (1d8), leather + shield.
 var dmg_n := 1
@@ -80,6 +82,8 @@ func roll_new_character() -> void:
 	charisma = GameData.roll_ability()
 	level = 1
 	xp = 0
+	gold = 0
+	inventory.clear()
 	max_hp = maxi(1, HIT_DIE + con_mod())
 	hp = max_hp
 
@@ -115,3 +119,23 @@ func damage_bonus() -> int:
 
 func gain_level_hp() -> int:
 	return maxi(1, GameData.roll(1, HIT_DIE) + con_mod())
+
+
+func add_gold(amount: int) -> void:
+	gold += amount
+
+
+func add_item(kind: int) -> void:
+	inventory.append(kind)
+
+
+func remove_item(kind: int) -> void:
+	inventory.erase(kind)
+
+
+func has_item(kind: int) -> bool:
+	return inventory.has(kind)
+
+
+func heal(amount: int) -> void:
+	hp = mini(max_hp, hp + amount)
