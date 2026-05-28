@@ -78,3 +78,31 @@ static func is_door(tile: int) -> bool:
 
 static func grid_to_world(grid_pos: Vector2i) -> Vector2:
 	return Vector2(grid_pos.x * CELL.x, grid_pos.y * CELL.y)
+
+static func roll(n: int, sides: int) -> int:
+	var total := 0
+	for _i in range(n):
+		total += randi_range(1, sides)
+	return total
+
+# 4d6 drop-lowest gives a slightly heroic, not-too-difficult character.
+static func roll_ability() -> int:
+	var dice := [randi_range(1, 6), randi_range(1, 6), randi_range(1, 6), randi_range(1, 6)]
+	dice.sort()
+	return int(dice[1]) + int(dice[2]) + int(dice[3])
+
+# Basic Fantasy ability score modifier table.
+static func ability_mod(score: int) -> int:
+	if score <= 3:
+		return -3
+	elif score <= 5:
+		return -2
+	elif score <= 8:
+		return -1
+	elif score <= 12:
+		return 0
+	elif score <= 15:
+		return 1
+	elif score <= 17:
+		return 2
+	return 3

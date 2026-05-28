@@ -2,6 +2,7 @@ extends Node2D
 
 const TOP_PANEL_H := 72
 const BOTTOM_PANEL_H := 60
+const ENGAGE_RANGE := 5
 
 var _dungeon := DungeonGenerator.new()
 var _turn := 1
@@ -10,6 +11,7 @@ var _awaiting_kick := false
 var _monsters: Array[Monster] = []
 var _monster_at: Dictionary = {}
 var _last_visible: Dictionary = {}
+var _player_alive := true
 
 @onready var _renderer: Node2D = $DungeonRenderer
 @onready var _player: Node2D = $Player
@@ -25,14 +27,15 @@ func _ready() -> void:
 	_setup_camera()
 	_setup_ui()
 
+	_player.roll_new_character()
+
 	var start := _dungeon.get_start_pos()
 	_player.grid_pos = start
 	_player.position = GameData.grid_to_world(start)
-	_player.finished_moving.connect(_on_player_moved)
 
 	_spawn_monsters()
 	_update_fov()
-	_add_message("Welcome to the dungeon, adventurer!")
+	_add_message("Welcome to the dungeon, Adventurer the Human Fighter!")
 	_add_message("[Debug] F5: new dungeon   F6: reveal map")
 	_update_status()
 
@@ -91,6 +94,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	if not _player_alive:
+		return
+
 	if _player.is_moving:
 		return
 
@@ -132,7 +138,7 @@ func _handle_kick_input(event: InputEvent) -> void:
 	if dir == Vector2i.ZERO:
 		_add_message("Never mind.")
 		return
-	_kick(dir)
+	_run_round(_do_kick_action.bind(dir))
 
 
 func _try_move(dir: Vector2i) -> void:
@@ -140,30 +146,44 @@ func _try_move(dir: Vector2i) -> void:
 	if target.x < 0 or target.y < 0 or target.x >= GameData.MAP_W or target.y >= GameData.MAP_H:
 		return
 
+	# Attacking, opening, and walking all cost a turn -> run a full round.
 	if _monster_at.has(target):
-		# Combat arrives in the next step; for now monsters are solid.
-		var m: Monster = _monster_at[target]
-		_add_message("A %s blocks your way." % GameData.MONSTERS[m.kind]["name"])
+		_run_round(_do_move_action.bind(dir))
 		return
 
 	var tile: int = _dungeon.get_tile(target.x, target.y)
+	if tile == GameData.Tile.DOOR_LOCKED:
+		_add_message("This door is locked.  Kick it open with (k).")
+		return
+	if tile == GameData.Tile.DOOR_CLOSED or GameData.is_passable(tile):
+		_run_round(_do_move_action.bind(dir))
 
+
+func _do_move_action(dir: Vector2i) -> void:
+	# Re-evaluated at execution time, so it stays correct if monsters moved first.
+	var target: Vector2i = _player.grid_pos + dir
+	if target.x < 0 or target.y < 0 or target.x >= GameData.MAP_W or target.y >= GameData.MAP_H:
+		return
+
+	if _monster_at.has(target):
+		_attack_monster(_monster_at[target])
+		return
+
+	var tile: int = _dungeon.get_tile(target.x, target.y)
 	if tile == GameData.Tile.DOOR_CLOSED:
 		_dungeon.set_tile(target.x, target.y, GameData.Tile.DOOR_OPEN)
 		_add_message("You open the door.")
-		_update_fov()
-		_advance_turn()
-		return
-
-	if tile == GameData.Tile.DOOR_LOCKED:
-		_add_message("This door is locked.  Kick it open with (k).")
 		return
 
 	if GameData.is_passable(tile):
 		_player.move_to(target)
+		if tile == GameData.Tile.STAIRS_DOWN:
+			_add_message("There is a staircase down here.")
+		elif tile == GameData.Tile.STAIRS_UP:
+			_add_message("There is a staircase up here.")
 
 
-func _kick(dir: Vector2i) -> void:
+func _do_kick_action(dir: Vector2i) -> void:
 	var target: Vector2i = _player.grid_pos + dir
 	var tile: int = _dungeon.get_tile(target.x, target.y)
 
@@ -171,7 +191,6 @@ func _kick(dir: Vector2i) -> void:
 		if randf() < 0.5:
 			_dungeon.set_tile(target.x, target.y, GameData.Tile.DOOR_OPEN)
 			_add_message("WHAMM!!  The door crashes open!")
-			_update_fov()
 		else:
 			_add_message("WHAMM!!  The door holds firm.")
 	elif GameData.is_wall(tile) or tile == GameData.Tile.NOTHING:
@@ -181,17 +200,47 @@ func _kick(dir: Vector2i) -> void:
 	else:
 		_add_message("You kick at empty space.")
 
-	_advance_turn()
+
+func _attack_monster(m: Monster) -> void:
+	var data: Dictionary = GameData.MONSTERS[m.kind]
+	var mname: String = data["name"]
+	var target_ac: int = data["ac"]
+	var atk: int = _player.melee_attack_bonus()
+	var d20 := randi_range(1, 20)
+	var total := d20 + atk
+
+	if total >= target_ac:
+		var base_dmg: int = GameData.roll(int(_player.dmg_n), int(_player.dmg_d))
+		var dmg := maxi(1, base_dmg + int(_player.damage_bonus()))
+		m.hp -= dmg
+		_add_message("You hit the %s!  [d20 %d+%d=%d vs AC %d]  -%d HP" %
+			[mname, d20, atk, total, target_ac, dmg])
+		if m.hp <= 0:
+			_kill_monster(m, mname, int(data["xp"]))
+	else:
+		_add_message("You miss the %s.  [d20 %d+%d=%d vs AC %d]" %
+			[mname, d20, atk, total, target_ac])
 
 
-func _on_player_moved() -> void:
-	_advance_turn()
-	_update_fov()
-	var tile := _dungeon.get_tile(_player.grid_pos.x, _player.grid_pos.y)
-	if tile == GameData.Tile.STAIRS_DOWN:
-		_add_message("There is a staircase down here.")
-	elif tile == GameData.Tile.STAIRS_UP:
-		_add_message("There is a staircase up here.")
+func _kill_monster(m: Monster, mname: String, xp_value: int) -> void:
+	_monster_at.erase(m.grid_pos)
+	_monsters.erase(m)
+	m.queue_free()
+	_add_message("The %s dies!  (+%d XP)" % [mname, xp_value])
+	_gain_xp(xp_value)
+
+
+func _gain_xp(amount: int) -> void:
+	_player.xp += amount
+	while _player.xp >= _player.level * 20:
+		_level_up()
+
+
+func _level_up() -> void:
+	_player.level += 1
+	_player.max_hp += _player.gain_level_hp()
+	_player.hp = _player.max_hp
+	_add_message("Welcome to experience level %d!" % _player.level)
 
 
 func _update_fov() -> void:
@@ -218,6 +267,8 @@ func _regenerate() -> void:
 	_renderer.explored_cells.clear()
 	_awaiting_kick = false
 	_turn = 1
+	_player_alive = true
+	_player.roll_new_character()
 	_player.place_at(_dungeon.get_start_pos())
 	_spawn_monsters()
 	_update_fov()
@@ -278,9 +329,120 @@ func _refresh_monster_visibility() -> void:
 		m.visible = reveal or _last_visible.has(m.grid_pos)
 
 
-func _advance_turn() -> void:
+func _run_round(player_action: Callable) -> void:
+	# A round is the unit of OSR combat. When combat is joined, both sides roll
+	# 1d6 group initiative; the higher side takes its whole phase first.
 	_turn += 1
+	var monsters_first := false
+	if _engaged():
+		var p_init := randi_range(1, 6)
+		var m_init := randi_range(1, 6)
+		monsters_first = m_init > p_init
+		if monsters_first:
+			_add_message("Initiative: you %d, enemy %d.  The enemy strikes first!" %
+				[p_init, m_init])
+		else:
+			_add_message("Initiative: you %d, enemy %d.  You act first." %
+				[p_init, m_init])
+
+	if monsters_first:
+		_monsters_act()
+		if _player_alive:
+			player_action.call()
+	else:
+		player_action.call()
+		_update_fov()
+		_monsters_act()
+
+	_update_fov()
 	_update_status()
+
+
+func _engaged() -> bool:
+	for m in _monsters:
+		if not _last_visible.has(m.grid_pos):
+			continue
+		var d: Vector2i = m.grid_pos - _player.grid_pos
+		if absi(d.x) + absi(d.y) <= ENGAGE_RANGE:
+			return true
+	return false
+
+
+func _monsters_act() -> void:
+	for m in _monsters:
+		if not _player_alive:
+			return
+		_monster_take_turn(m)
+
+
+func _monster_take_turn(m: Monster) -> void:
+	# Only monsters the player can currently see are active (they see you too).
+	if not _last_visible.has(m.grid_pos):
+		return
+	var to_player: Vector2i = _player.grid_pos - m.grid_pos
+	var dist := absi(to_player.x) + absi(to_player.y)
+	if dist <= 1:
+		_monster_attack(m)
+		return
+	var step := _choose_monster_step(m, to_player)
+	if step != Vector2i.ZERO:
+		var old := m.grid_pos
+		m.move_to(old + step)
+		_monster_at.erase(old)
+		_monster_at[m.grid_pos] = m
+
+
+func _choose_monster_step(m: Monster, to_player: Vector2i) -> Vector2i:
+	# Greedy chase: try the longer axis first, then the other.
+	var options: Array[Vector2i] = []
+	if absi(to_player.x) >= absi(to_player.y):
+		if to_player.x != 0:
+			options.append(Vector2i(signi(to_player.x), 0))
+		if to_player.y != 0:
+			options.append(Vector2i(0, signi(to_player.y)))
+	else:
+		if to_player.y != 0:
+			options.append(Vector2i(0, signi(to_player.y)))
+		if to_player.x != 0:
+			options.append(Vector2i(signi(to_player.x), 0))
+	for step in options:
+		if _monster_can_enter(m.grid_pos + step):
+			return step
+	return Vector2i.ZERO
+
+
+func _monster_can_enter(cell: Vector2i) -> bool:
+	if cell == _player.grid_pos:
+		return false
+	if _monster_at.has(cell):
+		return false
+	return GameData.is_passable(_dungeon.get_tile(cell.x, cell.y))
+
+
+func _monster_attack(m: Monster) -> void:
+	var data: Dictionary = GameData.MONSTERS[m.kind]
+	var mname: String = data["name"]
+	var atk: int = data["atk"]
+	var pac: int = _player.armor_class()
+	var d20 := randi_range(1, 20)
+	var total := d20 + atk
+
+	if total >= pac:
+		var dmg := GameData.roll(int(data["dmg_n"]), int(data["dmg_d"]))
+		_player.take_damage(dmg)
+		_add_message("The %s hits you!  [d20 %d+%d=%d vs AC %d]  -%d HP" %
+			[mname, d20, atk, total, pac, dmg])
+		if not _player.is_alive():
+			_player_dies()
+	else:
+		_add_message("The %s misses you.  [d20 %d+%d=%d vs AC %d]" %
+			[mname, d20, atk, total, pac])
+
+
+func _player_dies() -> void:
+	_player_alive = false
+	_add_message("You die...")
+	_add_message("Press F5 to start a new game.")
 
 
 func _add_message(text: String) -> void:
@@ -288,6 +450,19 @@ func _add_message(text: String) -> void:
 
 
 func _update_status() -> void:
+	var st: int = _player.strength
+	var dx: int = _player.dexterity
+	var co: int = _player.constitution
+	var intel: int = _player.intelligence
+	var wi: int = _player.wisdom
+	var cha: int = _player.charisma
+	var hp: int = _player.hp
+	var max_hp: int = _player.max_hp
+	var ac: int = _player.armor_class()
+	var lvl: int = _player.level
+	var xp: int = _player.xp
 	_status.clear()
-	_status.append_text("Adventurer the Aspirant     St:16 Dx:12 Co:14 In:9 Wi:10 Ch:11     Lawful\n")
-	_status.append_text("$:0  HP:10(10)  Pw:0(0)  AC:10  Exp:1  T:%d" % _turn)
+	_status.append_text("Adventurer the Fighter     St:%d Dx:%d Co:%d In:%d Wi:%d Ch:%d     Lawful\n" %
+		[st, dx, co, intel, wi, cha])
+	_status.append_text("$:0  HP:%d(%d)  Pw:0(0)  AC:%d  Exp:%d/%d  T:%d" %
+		[maxi(0, hp), max_hp, ac, lvl, xp, _turn])

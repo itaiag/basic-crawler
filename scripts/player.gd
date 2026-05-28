@@ -5,6 +5,24 @@ signal finished_moving
 var grid_pos := Vector2i.ZERO
 var is_moving := false
 
+var strength := 10
+var dexterity := 10
+var constitution := 10
+var intelligence := 10
+var wisdom := 10
+var charisma := 10
+
+var hp := 8
+var max_hp := 8
+var xp := 0
+var level := 1
+
+# Fixed starting kit until the items stage: longsword (1d8), leather + shield.
+var dmg_n := 1
+var dmg_d := 8
+const ARMOR_AC := 14
+const HIT_DIE := 8
+
 const MOVE_DURATION := 0.1
 
 var _font: Font
@@ -43,3 +61,57 @@ func place_at(target: Vector2i) -> void:
 func _on_move_finished() -> void:
 	is_moving = false
 	finished_moving.emit()
+
+
+func take_damage(amount: int) -> void:
+	hp -= amount
+
+
+func is_alive() -> bool:
+	return hp > 0
+
+
+func roll_new_character() -> void:
+	strength = GameData.roll_ability()
+	dexterity = GameData.roll_ability()
+	constitution = GameData.roll_ability()
+	intelligence = GameData.roll_ability()
+	wisdom = GameData.roll_ability()
+	charisma = GameData.roll_ability()
+	level = 1
+	xp = 0
+	max_hp = maxi(1, HIT_DIE + con_mod())
+	hp = max_hp
+
+
+func str_mod() -> int:
+	return GameData.ability_mod(strength)
+
+
+func dex_mod() -> int:
+	return GameData.ability_mod(dexterity)
+
+
+func con_mod() -> int:
+	return GameData.ability_mod(constitution)
+
+
+func wis_mod() -> int:
+	return GameData.ability_mod(wisdom)
+
+
+func armor_class() -> int:
+	return ARMOR_AC + dex_mod()
+
+
+func melee_attack_bonus() -> int:
+	# Fighter base attack roughly equals level, plus Strength.
+	return level + str_mod()
+
+
+func damage_bonus() -> int:
+	return str_mod()
+
+
+func gain_level_hp() -> int:
+	return maxi(1, GameData.roll(1, HIT_DIE) + con_mod())
