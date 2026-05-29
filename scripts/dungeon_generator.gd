@@ -62,6 +62,10 @@ func generate(width: int, height: int, max_rooms: int = 8) -> void:
 		var down_pos: Vector2i = last.position + last.size / 2
 		tiles[down_pos.y][down_pos.x] = GameData.Tile.STAIRS_DOWN
 
+	# Pillars last: candidates must be FLOOR, which naturally excludes the stairs
+	# cells (and therefore the player start) placed just above.
+	_add_pillars()
+
 
 func get_tile(x: int, y: int) -> int:
 	if tiles.is_empty() or x < 0 or y < 0 or y >= tiles.size() or x >= tiles[0].size():
@@ -305,3 +309,103 @@ func _random_door() -> int:
 	elif r < 0.75:
 		return GameData.Tile.DOOR_CLOSED
 	return GameData.Tile.DOOR_OPEN
+
+
+# --- Pillars -------------------------------------------------------------------
+# Sparse, symmetric stone columns inside larger rooms. Real blocking features:
+# not passable, not transparent (see GameData), placed only on FLOOR cells.
+
+func _add_pillars() -> void:
+	for room in rooms:
+		_maybe_add_pillars(room)
+
+
+func _maybe_add_pillars(room: Rect2i) -> void:
+	# room is the FLOOR-only interior rect. Only medium/large rooms qualify.
+	if room.size.x < 5 or room.size.y < 5:
+		return
+	if randf() > 0.30:  # ~30% of qualifying rooms get pillars (sparse overall)
+		return
+	var candidates := _pillar_candidates(room)
+	# Bail on the whole (symmetric) set if any spot is unusable -- keeps it tidy.
+	for c in candidates:
+		if not _pillar_cell_ok(c):
+			return
+	if not _room_connected_without(room, candidates):
+		return
+	for c in candidates:
+		set_tile(c.x, c.y, GameData.Tile.PILLAR)
+
+
+func _pillar_candidates(room: Rect2i) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var pos := room.position
+	var iw := room.size.x
+	var ih := room.size.y
+	var cx := pos.x + iw / 2
+	var cy := pos.y + ih / 2
+	var big := iw >= 7 and ih >= 5
+	var choice := randi() % (3 if big else 2)
+	if big and choice == 2:
+		# 4 inset corners (leaves the centre and edges open).
+		out.append(Vector2i(pos.x + 1, pos.y + 1))
+		out.append(Vector2i(pos.x + iw - 2, pos.y + 1))
+		out.append(Vector2i(pos.x + 1, pos.y + ih - 2))
+		out.append(Vector2i(pos.x + iw - 2, pos.y + ih - 2))
+	elif choice == 1:
+		# 2 symmetric pillars along the longer axis.
+		if iw >= ih:
+			out.append(Vector2i(pos.x + 1, cy))
+			out.append(Vector2i(pos.x + iw - 2, cy))
+		else:
+			out.append(Vector2i(cx, pos.y + 1))
+			out.append(Vector2i(cx, pos.y + ih - 2))
+	else:
+		# Single central pillar.
+		out.append(Vector2i(cx, cy))
+	return out
+
+
+func _pillar_cell_ok(c: Vector2i) -> bool:
+	# Must be plain floor (so never on stairs / start), and not hugging a door.
+	if get_tile(c.x, c.y) != GameData.Tile.FLOOR:
+		return false
+	for d in DIRS4:
+		var dir: Vector2i = d
+		var nb: Vector2i = c + dir
+		if GameData.is_door(get_tile(nb.x, nb.y)):
+			return false
+	return true
+
+
+func _room_connected_without(room: Rect2i, pillars: Array[Vector2i]) -> bool:
+	# Flood-fill the room's floor with the pillars removed; every floor cell must
+	# stay reachable so a room is never split or sealed off from its doors.
+	var blocked := {}
+	for p in pillars:
+		blocked[p] = true
+	var cells: Array[Vector2i] = []
+	for y in range(room.position.y, room.end.y):
+		for x in range(room.position.x, room.end.x):
+			var cell := Vector2i(x, y)
+			if get_tile(x, y) == GameData.Tile.FLOOR and not blocked.has(cell):
+				cells.append(cell)
+	if cells.is_empty():
+		return false
+	var seen := {}
+	var q: Array[Vector2i] = [cells[0]]
+	seen[cells[0]] = true
+	while not q.is_empty():
+		var cur: Vector2i = q.pop_back()
+		for d in DIRS4:
+			var dir: Vector2i = d
+			var nb: Vector2i = cur + dir
+			if seen.has(nb) or blocked.has(nb):
+				continue
+			if get_tile(nb.x, nb.y) == GameData.Tile.FLOOR:
+				seen[nb] = true
+				q.append(nb)
+	for cell in cells:
+		if not seen.has(cell):
+			return false
+	return true

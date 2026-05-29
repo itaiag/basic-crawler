@@ -731,6 +731,10 @@ func _try_move(dir: Vector2i) -> void:
 	if tile == GameData.Tile.DOOR_LOCKED:
 		_add_message("This door is locked.  Kick it open with (k).")
 		return
+	if tile == GameData.Tile.PILLAR:
+		# Like a wall bump: no turn consumed, but a hint that it's a real obstacle.
+		_add_message("A stone pillar blocks the way.")
+		return
 	if tile == GameData.Tile.DOOR_CLOSED or GameData.is_passable(tile):
 		_run_round(_do_move_action.bind(dir))
 

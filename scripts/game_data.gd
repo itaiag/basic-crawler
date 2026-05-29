@@ -11,6 +11,7 @@ enum Tile {
 	DOOR_OPEN,
 	STAIRS_DOWN,
 	STAIRS_UP,
+	PILLAR,
 }
 
 const CELL := Vector2i(16, 24)
@@ -25,6 +26,7 @@ const COLOR_FLOOR_BG := Color(0.12, 0.12, 0.14)  # dark stone fill for room floo
 const COLOR_CORRIDOR := Color(0.21, 0.18, 0.15)  # dark earthy tunnel; drawn as a narrow core with a darker edge
 const COLOR_DOOR := Color(0.52, 0.37, 0.18)  # muted wood, not neon yellow
 const COLOR_STAIRS := Color.WHITE
+const COLOR_PILLAR := Color(0.26, 0.26, 0.31)  # cool stone column, distinct from warm walls
 
 # Visual-polish tokens/highlights drawn behind glyphs (player, monsters, combat).
 const COLOR_TOKEN_BG := Color(0.06, 0.06, 0.08)
@@ -120,8 +122,11 @@ static func get_tile_color(tile: int) -> Color:
 		Tile.CORRIDOR: return COLOR_CORRIDOR
 		Tile.DOOR_CLOSED, Tile.DOOR_LOCKED, Tile.DOOR_OPEN: return COLOR_DOOR
 		Tile.STAIRS_DOWN, Tile.STAIRS_UP: return COLOR_STAIRS
+		Tile.PILLAR: return COLOR_PILLAR
 	return Color.BLACK
 
+# PILLAR is intentionally absent from both whitelists below: it blocks movement
+# and sight like a wall, but is rendered as a column and isn't a room boundary.
 static func is_passable(tile: int) -> bool:
 	return tile in [Tile.FLOOR, Tile.CORRIDOR, Tile.DOOR_OPEN,
 		Tile.STAIRS_DOWN, Tile.STAIRS_UP]
@@ -132,6 +137,9 @@ static func is_transparent(tile: int) -> bool:
 
 static func is_wall(tile: int) -> bool:
 	return tile == Tile.WALL_H or tile == Tile.WALL_V
+
+static func is_pillar(tile: int) -> bool:
+	return tile == Tile.PILLAR
 
 static func is_door(tile: int) -> bool:
 	return tile in [Tile.DOOR_CLOSED, Tile.DOOR_LOCKED, Tile.DOOR_OPEN]

@@ -73,6 +73,10 @@ func _draw() -> void:
 				_draw_door(x, y, tile, visible_now)
 				continue
 
+			if tile == GameData.Tile.PILLAR:
+				_draw_pillar(x, y, visible_now)
+				continue
+
 			# Stairs (and anything else): a floor base with the glyph on top.
 			_draw_floor(x, y, visible_now)
 			var ch := GameData.get_tile_char(tile)
@@ -187,6 +191,25 @@ func _draw_door(x: int, y: int, tile: int, visible_now: bool) -> void:
 		var sx := left + (cx - thick) * 0.5
 		draw_rect(Rect2(sx, top, thick, cy), wood.darkened(0.15))
 		draw_rect(Rect2(sx, top, 1.0, cy), wood.lightened(0.12))
+
+
+func _draw_pillar(x: int, y: int, visible_now: bool) -> void:
+	# A stone column standing on the room floor: a dark capsule with a lit top cap.
+	var cx := float(GameData.CELL.x)
+	var cy := float(GameData.CELL.y)
+	_draw_floor(x, y, visible_now)
+	var px := x * cx + cx * 0.5
+	var py := y * cy + cy * 0.5
+	var body := GameData.COLOR_PILLAR
+	if not visible_now:
+		body = _dim(body)
+	var w := 9.0
+	var hh := 6.0
+	draw_rect(Rect2(px - w * 0.5, py - hh, w, hh * 2.0), body)
+	draw_circle(Vector2(px, py - hh), w * 0.5, body)
+	draw_circle(Vector2(px, py + hh), w * 0.5, body)
+	if visible_now:
+		draw_circle(Vector2(px, py - hh), w * 0.5 - 1.5, body.lightened(0.22))
 
 
 func _corridor_link(x: int, y: int) -> bool:
