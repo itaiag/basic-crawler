@@ -55,9 +55,17 @@ func _draw() -> void:
 
 			if tile == GameData.Tile.FLOOR:
 				_draw_floor(x, y, visible_now)
+				# Plain floor only -- items/stairs/doors/pillars never reach this branch.
+				var fd: int = int(dungeon.floor_details.get(pos, -1))
+				if fd >= 0:
+					_draw_floor_detail(x, y, fd, visible_now)
 				continue
 
 			var color := GameData.get_tile_color(tile)
+			if GameData.is_wall(tile):
+				var wri: int = dungeon.tile_room_at(pos)
+				if wri >= 0:
+					color = GameData.apply_mood(color, int(dungeon.room_moods[wri]))
 			if not visible_now:
 				color = _dim(color)
 
@@ -102,16 +110,63 @@ func _cell_noise(x: int, y: int) -> float:
 func _draw_floor(x: int, y: int, visible_now: bool) -> void:
 	var cx := float(GameData.CELL.x)
 	var cy := float(GameData.CELL.y)
-	# Flat, uniform stone -- no per-cell brightness, so no checkerboard.
 	var col := GameData.COLOR_FLOOR_BG
+	# Faint per-room mood tint (10% lerp; subtle on purpose).
+	var ri: int = dungeon.tile_room_at(Vector2i(x, y))
+	if ri >= 0:
+		col = GameData.apply_mood(col, int(dungeon.room_moods[ri]))
 	if not visible_now:
 		col = _dim(col)
 	draw_rect(Rect2(x * cx, y * cy, cx, cy), col)
-	# A rare, faint hairline crack for a hint of texture (deterministic per cell).
-	if visible_now and _cell_noise(x, y) > 0.96:
-		var c := Vector2(x * cx + cx * 0.5, y * cy + cy * 0.5)
-		draw_line(Vector2(c.x - 2.0, c.y + 1.0), Vector2(c.x + 2.0, c.y - 1.0),
-			col.lightened(0.06), 1.0)
+
+
+# Small aging marks on plain floor cells. Stable per dungeon (placement comes
+# from the decoration layer; only sub-cell jitter uses the deterministic noise).
+func _draw_floor_detail(x: int, y: int, kind: int, visible_now: bool) -> void:
+	var cx := float(GameData.CELL.x)
+	var cy := float(GameData.CELL.y)
+	var px := x * cx + cx * 0.5
+	var py := y * cy + cy * 0.5
+	var ox := (_cell_noise(x, y) - 0.5) * 4.0
+	var oy := (_cell_noise(y, x + 7) - 0.5) * 4.0
+	var col: Color
+	if kind == 2:  # moss -- a hint of green only on this kind
+		col = GameData.COLOR_FLOOR_BG.lerp(Color(0.28, 0.42, 0.26), 0.55)
+	else:
+		col = GameData.COLOR_FLOOR_BG.darkened(0.5)
+	if not visible_now:
+		col = _dim(col)
+	match kind:
+		0:  # short diagonal crack
+			draw_line(Vector2(px + ox - 2.0, py + oy + 1.0),
+				Vector2(px + ox + 2.0, py + oy - 1.0), col, 1.0)
+		1:  # small dark stain
+			draw_circle(Vector2(px + ox, py + oy + 1.0), 1.6, col)
+		2:  # moss spot
+			draw_circle(Vector2(px + ox, py + oy), 2.0, col)
+		3:  # tiny rubble cluster
+			draw_rect(Rect2(px + ox - 2.0, py + oy + 1.0, 1.0, 1.0), col)
+			draw_rect(Rect2(px + ox + 1.0, py + oy - 1.0, 1.0, 1.0), col)
+			draw_rect(Rect2(px + ox + 2.0, py + oy + 2.0, 1.0, 1.0), col)
+
+
+func _draw_wall_crack(x: int, y: int, variant: int, color: Color) -> void:
+	var cx := float(GameData.CELL.x)
+	var cy := float(GameData.CELL.y)
+	var left := x * cx
+	var top := y * cy
+	# Slightly darker than the wall body for a subtle chipped/cracked look.
+	var c := color.darkened(0.55)
+	match variant:
+		0:
+			draw_line(Vector2(left + 4.0, top + 4.0), Vector2(left + 7.0, top + 9.0), c, 1.0)
+		1:
+			draw_line(Vector2(left + 10.0, top + 6.0), Vector2(left + 12.0, top + 14.0), c, 1.0)
+		2:
+			draw_line(Vector2(left + 5.0, top + 16.0), Vector2(left + 9.0, top + 19.0), c, 1.0)
+		3:
+			draw_rect(Rect2(left + 6.0, top + 10.0, 1.0, 1.0), c)
+			draw_rect(Rect2(left + 7.0, top + 11.0, 1.0, 1.0), c)
 
 
 func _draw_item(x: int, y: int, it: Dictionary, visible_now: bool, baseline: float, fs: int) -> void:
@@ -150,6 +205,11 @@ func _draw_wall(x: int, y: int, color: Color) -> void:
 		draw_line(Vector2(left, top), Vector2(left, top + cy), hi, 1.5)
 	if _is_open_space(x + 1, y):
 		draw_line(Vector2(left + cx, top), Vector2(left + cx, top + cy), hi, 1.5)
+
+	# Sparse chip/crack overlay from the atmosphere layer. Dim follows `color`.
+	var crack_v: int = int(dungeon.wall_cracks.get(Vector2i(x, y), -1))
+	if crack_v >= 0:
+		_draw_wall_crack(x, y, crack_v, color)
 
 
 # True for walkable-ish space a wall can border (floor / corridor / door / stairs).
@@ -201,6 +261,9 @@ func _draw_pillar(x: int, y: int, visible_now: bool) -> void:
 	var px := x * cx + cx * 0.5
 	var py := y * cy + cy * 0.5
 	var body := GameData.COLOR_PILLAR
+	var ri: int = dungeon.tile_room_at(Vector2i(x, y))
+	if ri >= 0:
+		body = GameData.apply_mood(body, int(dungeon.room_moods[ri]))
 	if not visible_now:
 		body = _dim(body)
 	var w := 9.0

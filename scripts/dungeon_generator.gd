@@ -5,6 +5,12 @@ const DIRS4 := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)
 var tiles := []
 var rooms: Array[Rect2i] = []
 
+# Atmosphere data generated once per dungeon (stable; renderer reads, never mutates).
+var room_moods: Array[int] = []           # parallel to rooms; values are GameData.Mood
+var tile_room: Dictionary = {}            # Vector2i -> room index, covers floor + wall ring
+var wall_cracks: Dictionary = {}          # Vector2i -> int variant on wall cells
+var floor_details: Dictionary = {}        # Vector2i -> int kind on plain-floor cells
+
 var _width := 0
 var _height := 0
 
@@ -12,6 +18,10 @@ var _height := 0
 func generate(width: int, height: int, max_rooms: int = 8) -> void:
 	tiles.clear()
 	rooms.clear()
+	room_moods.clear()
+	tile_room.clear()
+	wall_cracks.clear()
+	floor_details.clear()
 	_width = width
 	_height = height
 
@@ -65,6 +75,12 @@ func generate(width: int, height: int, max_rooms: int = 8) -> void:
 	# Pillars last: candidates must be FLOOR, which naturally excludes the stairs
 	# cells (and therefore the player start) placed just above.
 	_add_pillars()
+
+	# Atmosphere layer -- moods + sparse cracks/details. Stable for the dungeon.
+	_assign_room_moods()
+	_build_tile_room_index()
+	_add_wall_cracks()
+	_add_floor_details()
 
 
 func get_tile(x: int, y: int) -> int:
@@ -409,3 +425,64 @@ func _room_connected_without(room: Rect2i, pillars: Array[Vector2i]) -> bool:
 		if not seen.has(cell):
 			return false
 	return true
+
+
+# --- Atmosphere ----------------------------------------------------------------
+
+func tile_room_at(cell: Vector2i) -> int:
+	# Room index for any floor or wall-ring cell, else -1 (corridors / void).
+	return int(tile_room.get(cell, -1))
+
+
+func _assign_room_moods() -> void:
+	# Most rooms stay neutral; the rest get a sparse mix of moods.
+	for ri in range(rooms.size()):
+		var r := randf()
+		var m: int = GameData.Mood.NORMAL
+		if r < 0.45:
+			m = GameData.Mood.NORMAL
+		elif r < 0.58:
+			m = GameData.Mood.DAMP
+		elif r < 0.70:
+			m = GameData.Mood.MOSSY
+		elif r < 0.81:
+			m = GameData.Mood.DUSTY
+		elif r < 0.92:
+			m = GameData.Mood.COLD
+		else:
+			m = GameData.Mood.RUINED
+		room_moods.append(m)
+
+
+func _build_tile_room_index() -> void:
+	for ri in range(rooms.size()):
+		var room: Rect2i = rooms[ri]
+		var ring := room.grow(1)
+		for y in range(ring.position.y, ring.end.y):
+			for x in range(ring.position.x, ring.end.x):
+				tile_room[Vector2i(x, y)] = ri
+
+
+func _add_wall_cracks() -> void:
+	# A small chance per wall cell -- about one chip per room on average.
+	for ri in range(rooms.size()):
+		var ring: Rect2i = rooms[ri].grow(1)
+		for y in range(ring.position.y, ring.end.y):
+			for x in range(ring.position.x, ring.end.x):
+				if not GameData.is_wall(get_tile(x, y)):
+					continue
+				if randf() < 0.04:
+					wall_cracks[Vector2i(x, y)] = randi() % 4
+
+
+func _add_floor_details() -> void:
+	# Plain-floor cells only: stairs / pillars / doors / corridors all sit on
+	# different tiles so they're excluded by construction.
+	for ri in range(rooms.size()):
+		var room: Rect2i = rooms[ri]
+		for y in range(room.position.y, room.end.y):
+			for x in range(room.position.x, room.end.x):
+				if get_tile(x, y) != GameData.Tile.FLOOR:
+					continue
+				if randf() < 0.06:
+					floor_details[Vector2i(x, y)] = randi() % 4

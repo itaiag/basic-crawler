@@ -32,6 +32,26 @@ const COLOR_PILLAR := Color(0.26, 0.26, 0.31)  # cool stone column, distinct fro
 const COLOR_TOKEN_BG := Color(0.06, 0.06, 0.08)
 const COLOR_COMBAT_HIGHLIGHT := Color(0.95, 0.55, 0.20)
 
+# Per-room atmosphere tint. Kept subtle by lerping the base colour 10% toward
+# the mood colour -- rooms should feel mildly different, not look colour-coded.
+enum Mood { NORMAL, DAMP, MOSSY, DUSTY, COLD, RUINED }
+const MOOD_TINT_STRENGTH := 0.10
+
+static func mood_color(mood: int) -> Color:
+	match mood:
+		Mood.DAMP: return Color(0.55, 0.65, 0.78)
+		Mood.MOSSY: return Color(0.45, 0.60, 0.40)
+		Mood.DUSTY: return Color(0.70, 0.60, 0.45)
+		Mood.COLD: return Color(0.45, 0.55, 0.75)
+		Mood.RUINED: return Color(0.65, 0.40, 0.35)
+	return Color(1, 1, 1, 1)
+
+static func apply_mood(c: Color, mood: int) -> Color:
+	if mood == Mood.NORMAL:
+		return c
+	return c.lerp(mood_color(mood), MOOD_TINT_STRENGTH)
+
+
 enum MonsterKind { SNAKE, RAT, SPIDER, GOBLIN }
 
 # Stats follow easy-leaning Basic Fantasy values. Index matches MonsterKind.
