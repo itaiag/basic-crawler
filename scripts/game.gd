@@ -4,6 +4,7 @@ const TOP_PANEL_H := 72
 const BOTTOM_PANEL_H := 60
 const RIGHT_PANEL_W := 340
 const ENGAGE_RANGE := 5
+const MORALE_SIGHT_RANGE := 6
 
 # Rest/sleep tuning. A rest is *abstracted* as SLEEP_TURNS danger rolls -- one
 # per advanced turn -- NOT 15 fully simulated monster turns. Nothing actually
@@ -767,29 +768,79 @@ func _attack_monster(m: Monster) -> void:
 	var target_ac: int = data["ac"]
 	var atk: int = _player.melee_attack_bonus()
 	var fatigue: int = FATIGUE_PENALTY if _player.fatigued else 0
-	var net := atk - fatigue
 	var d20 := randi_range(1, 20)
-	var total := d20 + net
+	var total := d20 + atk - fatigue
 
-	if total >= target_ac:
-		var base_dmg: int = GameData.roll(int(_player.weapon_dmg_n()), int(_player.weapon_dmg_d()))
-		var dmg := maxi(1, base_dmg + int(_player.damage_bonus()))
-		m.hp -= dmg
-		_add_message("You hit the %s!  [d20 %d %+d = %d vs AC %d]  -%d HP" %
-			[mname, d20, net, total, target_ac, dmg])
-		if m.hp <= 0:
-			_kill_monster(m, mname, int(data["xp"]))
+	var calc := "d20 %d %s" % [d20, _signed(atk)]
+	if fatigue > 0:
+		calc += " %s" % _signed(-fatigue)  # show the fatigue penalty as its own term
+	calc += " = %d" % total
+	var hit := total >= target_ac
+	_add_message("You attack %s: %s vs AC %d -> %s" %
+		[_cap(mname), calc, target_ac, "HIT" if hit else "MISS"])
+	if not hit:
+		return
+
+	var dn := int(_player.weapon_dmg_n())
+	var dd := int(_player.weapon_dmg_d())
+	var base_dmg := GameData.roll(dn, dd)
+	var dbonus := int(_player.damage_bonus())
+	var raw := base_dmg + dbonus
+	var dmg := maxi(1, raw)
+	var dline := "Damage: %s %dd%d %d %s = %d" % [_player_weapon_name(), dn, dd, base_dmg, _signed(dbonus), raw]
+	if dmg != raw:
+		dline += " (min 1)"
+	_add_message(dline)
+
+	m.hp -= dmg
+	if m.hp <= 0:
+		_kill_monster(m, mname, int(data["xp"]))
 	else:
-		_add_message("You miss the %s.  [d20 %d %+d = %d vs AC %d]" %
-			[mname, d20, net, total, target_ac])
+		_check_half_hp_morale(m)
 
 
 func _kill_monster(m: Monster, mname: String, xp_value: int) -> void:
+	var dead_pos: Vector2i = m.grid_pos
 	_monster_at.erase(m.grid_pos)
 	_monsters.erase(m)
 	m.queue_free()
-	_add_message("The %s dies!  (+%d XP)" % [mname, xp_value])
+	_add_message("%s dies!  (+%d XP)" % [_cap(mname), xp_value])
 	_gain_xp(xp_value)
+	_check_ally_death_morale(dead_pos)
+
+
+func _check_half_hp_morale(m: Monster) -> void:
+	# First time a monster is brought to half HP or less, it tests its nerve.
+	if m.morale_checked or m.fleeing:
+		return
+	if m.hp * 2 <= m.max_hp:
+		m.morale_checked = true
+		_morale_check(m)
+
+
+func _check_ally_death_morale(dead_pos: Vector2i) -> void:
+	# Living monsters near enough to witness a comrade fall test morale too.
+	for m in _monsters:
+		if m.fleeing:
+			continue
+		if not _last_visible.has(m.grid_pos):
+			continue
+		var d: Vector2i = m.grid_pos - dead_pos
+		if absi(d.x) + absi(d.y) <= MORALE_SIGHT_RANGE:
+			_morale_check(m)
+
+
+func _morale_check(m: Monster) -> void:
+	# Basic Fantasy 2d6 morale: a roll over the score breaks the monster -> flee.
+	var data: Dictionary = GameData.MONSTERS[m.kind]
+	var nm: String = data["name"]
+	var morale: int = data["morale"]
+	var roll := randi_range(1, 6) + randi_range(1, 6)
+	var held := roll <= morale
+	_add_message("%s morale: 2d6 %d vs %d -> %s" %
+		[_cap(nm), roll, morale, "HOLDS" if held else "FLEES"])
+	if not held:
+		m.fleeing = true
 
 
 func _gain_xp(amount: int) -> void:
@@ -1020,15 +1071,29 @@ func _monster_take_turn(m: Monster) -> void:
 		return
 	var to_player: Vector2i = _player.grid_pos - m.grid_pos
 	var dist := absi(to_player.x) + absi(to_player.y)
+
+	if m.fleeing:
+		var flee := _choose_flee_step(m, to_player)
+		if flee != Vector2i.ZERO:
+			_move_monster(m, flee)
+		elif dist <= 1:
+			# Cornered with nowhere to run -> it turns and fights.
+			_monster_attack(m)
+		return
+
 	if dist <= 1:
 		_monster_attack(m)
 		return
 	var step := _choose_monster_step(m, to_player)
 	if step != Vector2i.ZERO:
-		var old := m.grid_pos
-		m.move_to(old + step)
-		_monster_at.erase(old)
-		_monster_at[m.grid_pos] = m
+		_move_monster(m, step)
+
+
+func _move_monster(m: Monster, step: Vector2i) -> void:
+	var old: Vector2i = m.grid_pos
+	m.move_to(old + step)
+	_monster_at.erase(old)
+	_monster_at[m.grid_pos] = m
 
 
 func _choose_monster_step(m: Monster, to_player: Vector2i) -> Vector2i:
@@ -1050,6 +1115,25 @@ func _choose_monster_step(m: Monster, to_player: Vector2i) -> Vector2i:
 	return Vector2i.ZERO
 
 
+func _choose_flee_step(m: Monster, to_player: Vector2i) -> Vector2i:
+	# Mirror of the chase: step directly away from the player when possible.
+	var options: Array[Vector2i] = []
+	if absi(to_player.x) >= absi(to_player.y):
+		if to_player.x != 0:
+			options.append(Vector2i(-signi(to_player.x), 0))
+		if to_player.y != 0:
+			options.append(Vector2i(0, -signi(to_player.y)))
+	else:
+		if to_player.y != 0:
+			options.append(Vector2i(0, -signi(to_player.y)))
+		if to_player.x != 0:
+			options.append(Vector2i(-signi(to_player.x), 0))
+	for step in options:
+		if _monster_can_enter(m.grid_pos + step):
+			return step
+	return Vector2i.ZERO
+
+
 func _monster_can_enter(cell: Vector2i) -> bool:
 	if cell == _player.grid_pos:
 		return false
@@ -1065,17 +1149,19 @@ func _monster_attack(m: Monster) -> void:
 	var pac: int = _player.armor_class()
 	var d20 := randi_range(1, 20)
 	var total := d20 + atk
+	var hit := total >= pac
+	_add_message("%s attacks you: d20 %d %s = %d vs AC %d -> %s" %
+		[_cap(mname), d20, _signed(atk), total, pac, "HIT" if hit else "MISS"])
+	if not hit:
+		return
 
-	if total >= pac:
-		var dmg := GameData.roll(int(data["dmg_n"]), int(data["dmg_d"]))
-		_player.take_damage(dmg)
-		_add_message("The %s hits you!  [d20 %d+%d=%d vs AC %d]  -%d HP" %
-			[mname, d20, atk, total, pac, dmg])
-		if not _player.is_alive():
-			_player_dies()
-	else:
-		_add_message("The %s misses you.  [d20 %d+%d=%d vs AC %d]" %
-			[mname, d20, atk, total, pac])
+	var dn := int(data["dmg_n"])
+	var dd := int(data["dmg_d"])
+	var dmg := GameData.roll(dn, dd)
+	_add_message("Damage: %dd%d %d = %d" % [dn, dd, dmg, dmg])
+	_player.take_damage(dmg)
+	if not _player.is_alive():
+		_player_dies()
 
 
 func _player_dies() -> void:
@@ -1086,6 +1172,26 @@ func _player_dies() -> void:
 
 func _add_message(text: String) -> void:
 	_msg_log.append_text(text + "\n")
+
+
+func _cap(s: String) -> String:
+	if s.is_empty():
+		return s
+	return s.substr(0, 1).to_upper() + s.substr(1)
+
+
+# Signed term with a space, e.g. "+ 2" / "- 1", for readable roll breakdowns.
+func _signed(n: int) -> String:
+	if n >= 0:
+		return "+ %d" % n
+	return "- %d" % (-n)
+
+
+func _player_weapon_name() -> String:
+	if _player.equipped_weapon >= 0:
+		var n: String = GameData.ITEMS[_player.equipped_weapon]["name"]
+		return n
+	return "fists"
 
 
 func _update_status() -> void:

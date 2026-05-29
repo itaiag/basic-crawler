@@ -27,17 +27,19 @@ const COLOR_STAIRS := Color.WHITE
 
 enum MonsterKind { SNAKE, RAT, SPIDER, GOBLIN }
 
-# Stats follow easy-leaning Basic Fantasy values; combat fields are used in a
-# later step. Index matches MonsterKind.
+# Stats follow easy-leaning Basic Fantasy values. Index matches MonsterKind.
+# Damage is dmg_n d dmg_d (monsters have no damage bonus). morale is the Basic
+# Fantasy 2d6 score: on a morale check, a 2d6 roll *over* this value breaks the
+# monster and it flees (lower = more skittish).
 const MONSTERS := [
 	{"name": "snake", "glyph": "S", "color": Color(0.35, 0.80, 0.35),
-		"hp": 4, "ac": 13, "atk": 1, "dmg_n": 1, "dmg_d": 4, "xp": 8},
+		"hp": 4, "ac": 13, "atk": 1, "dmg_n": 1, "dmg_d": 4, "xp": 8, "morale": 7},
 	{"name": "rat", "glyph": "R", "color": Color(0.62, 0.45, 0.30),
-		"hp": 3, "ac": 12, "atk": 0, "dmg_n": 1, "dmg_d": 3, "xp": 4},
+		"hp": 3, "ac": 12, "atk": 0, "dmg_n": 1, "dmg_d": 3, "xp": 4, "morale": 5},
 	{"name": "spider", "glyph": "s", "color": Color(0.85, 0.85, 0.92),
-		"hp": 5, "ac": 13, "atk": 1, "dmg_n": 1, "dmg_d": 4, "xp": 10},
+		"hp": 5, "ac": 13, "atk": 1, "dmg_n": 1, "dmg_d": 4, "xp": 10, "morale": 7},
 	{"name": "goblin", "glyph": "G", "color": Color(0.60, 0.72, 0.25),
-		"hp": 6, "ac": 13, "atk": 1, "dmg_n": 1, "dmg_d": 6, "xp": 12},
+		"hp": 6, "ac": 13, "atk": 1, "dmg_n": 1, "dmg_d": 6, "xp": 12, "morale": 8},
 ]
 
 const COLOR_GOLD := Color(0.95, 0.85, 0.20)

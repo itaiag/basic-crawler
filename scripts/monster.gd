@@ -6,6 +6,11 @@ var grid_pos := Vector2i.ZERO
 var hp := 1
 var max_hp := 1
 
+# Morale state. fleeing flips on a failed morale check; morale_checked guards the
+# one-time "dropped to half HP" trigger so it only fires once per monster.
+var fleeing := false
+var morale_checked := false
+
 const MOVE_DURATION := 0.1
 
 var _font: Font

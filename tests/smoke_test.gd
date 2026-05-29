@@ -67,7 +67,7 @@ func _test_attack() -> void:
 	# Bumping into the monster routes through _do_move_action -> _attack_monster.
 	_game._try_move(dir)
 	var log_text: String = _game._msg_log.get_parsed_text()
-	if not log_text.contains("snake"):
+	if not log_text.to_lower().contains("snake"):
 		_fail("attack produced no combat message in the log")
 	if not _game._player_alive:
 		_fail("player unexpectedly died during the smoke test")
