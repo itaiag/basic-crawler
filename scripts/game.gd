@@ -6,6 +6,12 @@ const RIGHT_PANEL_W := 340
 const ENGAGE_RANGE := 5
 const MORALE_SIGHT_RANGE := 6
 
+# Subtle battle zoom. In Godot 4 a larger Camera2D.zoom means more zoomed-in,
+# so combat nudges the view slightly closer. Keep it gentle ("felt, not noticed").
+const CAMERA_ZOOM_NORMAL := Vector2(1.0, 1.0)
+const CAMERA_ZOOM_COMBAT := Vector2(1.12, 1.12)
+const CAMERA_ZOOM_DURATION := 0.25
+
 # Rest/sleep tuning. A rest is *abstracted* as SLEEP_TURNS danger rolls -- one
 # per advanced turn -- NOT 15 fully simulated monster turns. Nothing actually
 # moves while you sleep; each turn only rolls against an interruption chance.
@@ -19,6 +25,8 @@ const FATIGUE_PENALTY := 2
 
 var _dungeon := DungeonGenerator.new()
 var _turn := 1
+var _combat_zoom_active := false
+var _camera_zoom_tween: Tween
 var _awaiting_kick := false
 
 var _monsters: Array[Monster] = []
@@ -68,6 +76,7 @@ func _ready() -> void:
 
 
 func _setup_camera() -> void:
+	_camera.zoom = CAMERA_ZOOM_NORMAL
 	_camera.limit_left = 0
 	_camera.limit_top = -TOP_PANEL_H
 	_camera.limit_right = GameData.MAP_W * GameData.CELL.x
@@ -190,6 +199,7 @@ func _begin_play() -> void:
 	_add_message("Commands: arrows move, k kick, c close door, i inventory, q quaff, w wield, W wear, R rest.")
 	_add_message("[Debug] F5: new dungeon   F6: reveal map")
 	_update_status()
+	_update_combat_camera_zoom()
 
 
 func _handle_create_input(event: InputEvent) -> void:
@@ -403,6 +413,7 @@ func _try_rest() -> void:
 
 	_update_fov()
 	_update_status()
+	_update_combat_camera_zoom()
 
 
 func _in_closed_room() -> bool:
@@ -883,6 +894,7 @@ func _regenerate() -> void:
 	_awaiting_close = false
 	_awaiting_wield = false
 	_awaiting_wear = false
+	_reset_combat_zoom()
 	_turn = 1
 	_player_alive = true
 	_player.place_at(_dungeon.get_start_pos())
@@ -1046,6 +1058,7 @@ func _run_round(player_action: Callable) -> void:
 
 	_update_fov()
 	_update_status()
+	_update_combat_camera_zoom()
 
 
 func _engaged() -> bool:
@@ -1056,6 +1069,33 @@ func _engaged() -> bool:
 		if absi(d.x) + absi(d.y) <= ENGAGE_RANGE:
 			return true
 	return false
+
+
+# Combat = the same engagement test used for initiative. Re-evaluated after each
+# turn; the zoom only animates when the state actually flips.
+func _update_combat_camera_zoom() -> void:
+	var should_zoom: bool = _player.hp > 0 and _engaged()
+	_set_combat_zoom(should_zoom)
+
+
+func _set_combat_zoom(active: bool) -> void:
+	if _combat_zoom_active == active:
+		return
+	_combat_zoom_active = active
+	if _camera_zoom_tween:
+		_camera_zoom_tween.kill()
+	var target_zoom := CAMERA_ZOOM_COMBAT if active else CAMERA_ZOOM_NORMAL
+	_camera_zoom_tween = create_tween()
+	_camera_zoom_tween.set_trans(Tween.TRANS_SINE)
+	_camera_zoom_tween.set_ease(Tween.EASE_OUT)
+	_camera_zoom_tween.tween_property(_camera, "zoom", target_zoom, CAMERA_ZOOM_DURATION)
+
+
+func _reset_combat_zoom() -> void:
+	if _camera_zoom_tween:
+		_camera_zoom_tween.kill()
+	_combat_zoom_active = false
+	_camera.zoom = CAMERA_ZOOM_NORMAL
 
 
 func _monsters_act() -> void:
@@ -1168,6 +1208,7 @@ func _player_dies() -> void:
 	_player_alive = false
 	_add_message("You die...")
 	_add_message("Press F5 to start a new game.")
+	_update_combat_camera_zoom()
 
 
 func _add_message(text: String) -> void:
