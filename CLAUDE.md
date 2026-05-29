@@ -4,63 +4,89 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-"Basic Crawler" — a NetHack/Rogue-inspired roguelike dungeon crawler built in **Godot 4.6.3** (GDScript). Randomly generated dungeons, turn-based OSR/Basic-Fantasy combat, permadeath. The full design brief is in `Basic Crawler Game Plan.md`. Targets desktop, mobile, and web via the GL Compatibility renderer — do not switch renderers or add features that break web/mobile export.
+"Basic Crawler" — a NetHack/Rogue-inspired roguelike dungeon crawler built in **Godot 4.6.3** (GDScript). Randomly generated dungeons, turn-based OSR/Basic-Fantasy combat, permadeath. The full design brief is in `Basic Crawler Game Plan.md`. Targets desktop, mobile, and web via the **GL Compatibility** renderer — do not switch renderers, and don't add features that break web/mobile export.
 
 ## Workflow expectation (important)
 
-Work is delivered in **small, reviewable stages, and within a stage in incremental steps**; the owner checks each step (usually by running the editor and sending a screenshot) before the next. Do not jump ahead. When a stage is broad, confirm scope/order with the owner first (use the question tool), then implement one reviewable step at a time.
+Work is delivered in **small, reviewable stages, and within a stage in incremental steps**; the owner checks each step (usually by running the editor and sending a screenshot) before the next. Do not jump ahead. When a stage is broad, confirm scope/order with the owner first (use the question tool), then implement one reviewable step at a time. The owner reviews visual changes by screenshot — many visual claims cannot be self-verified headless; say so rather than asserting success.
 
-Status: Stage 1 (dungeon + movement + FOV + doors), Stage 2 (monsters, bump combat, chase AI, death), and Stage 3 (ability scores + character-creation screen) are done. Stage 4 (items & features) is in progress — gold/potions/inventory/quaff are in; **descend-to-deeper-levels** and **traps & searching** (with *hidden* search rolls) are not yet built. Per the design doc: attack and saving-throw rolls are shown to the player; trap/secret-door search rolls must stay hidden.
+Status: Stages 1-3 (dungeon + FOV + doors; monsters + bump combat + chase AI + death; ability scores + character creation) are done. Stage 4 is largely in place — gold/potions/quaff, weapons/armor with two-handed-vs-shield rule, rest/sleep with fatigue penalty applied to attack rolls, close-door, wield/wear, monster morale (2d6) with fleeing, blocking **pillars** (real gameplay feature), battle-zoom camera effect, side-docked inventory panel, atmosphere layer (room moods + wall cracks + floor details). **Not yet built**: descend-to-deeper-levels, traps & searching. Per the design doc, attack/saving-throw rolls are shown to the player; trap/secret-door **search rolls must stay hidden**.
 
 ## Validating changes
 
-There is no test suite. Validate by running Godot **headless** (the console build streams errors to stdout):
+There is no unit-test suite. There are three layers of headless validation; use the right one for the change.
 
-```
-"C:\Users\itaia\OneDrive\Desktop\Godot\Godot_v4.6.3-stable_win64_console.exe" --headless --path "C:\Users\itaia\git\godot\basic-crawler" --quit-after 30
-```
+1. **Boot check** — compiles every script and runs `Game._ready()`:
+   ```
+   "C:\Users\itaia\OneDrive\Desktop\Godot\Godot_v4.6.3-stable_win64_console.exe" --headless --path "C:\Users\itaia\git\godot\basic-crawler" --quit-after 30
+   ```
+   Exit 0 with no `ERROR`/`SCRIPT` lines = scripts parsed and `_ready` ran. **Headless does not simulate input or combat** — attack rolls, monster turns, overlays, the inventory panel build, etc. never execute, so runtime errors there slip through. After renaming/removing a field or method, **grep every call site** rather than relying on this check.
 
-Exit 0 with no error lines means scripts compiled and `Game._ready()` ran. Important limits and patterns:
+2. **Gameplay smoke test** (`tests/smoke_test.gd`) — a persistent `extends SceneTree` script that instances `game.tscn`, waits a frame for `_ready`, then drives one move and one bump-attack through the real code (`_try_move` → `_run_round` → `_do_move_action`/`_attack_monster`). Re-run after touching turn/combat/input/movement code:
+   ```
+   "C:\Users\itaia\OneDrive\Desktop\Godot\Godot_v4.6.3-stable_win64_console.exe" --headless --path "C:\Users\itaia\git\godot\basic-crawler" --script res://tests/smoke_test.gd
+   ```
+   Pass = exit 0 + `SMOKE TEST PASSED` + no `SCRIPT ERROR` lines. It's dev-only (never referenced by `game.tscn`).
 
-- **Headless boots the scene but does not simulate input or combat.** Whole code paths (attacking, quaffing, monster turns, overlays) never execute, so runtime errors there slip through `--quit-after`. After renaming/removing a field or method, **grep every call site** rather than relying on the boot check.
-- **Adding a new `class_name` requires registering it** before a plain headless run can resolve it. Run an editor pass once: `--headless --editor --quit --path <project>` (watch for `update_scripts_classes | <YourClass>`), then validate normally.
-- **To exercise logic headless**, write a throwaway `extends SceneTree` script with an `_init()` that constructs objects and `print()`s results, run it with `--script res://scripts/_tmp.gd`, then delete it (and its `.uid`). This is how stat/item math has been spot-checked.
-- **Gameplay smoke test (`tests/smoke_test.gd`).** A persistent `extends SceneTree` script that instances the real `game.tscn`, waits a frame for `_ready`, then drives one move and one bump-attack through the actual turn/combat code (`_try_move` → `_run_round` → `_do_move_action`/`_attack_monster`). This covers the move/combat paths the boot check skips. Run:
+3. **Throwaway logic checks** — for anything the smoke test doesn't cover (stat math, morale/fleeing transitions, pillar generation constraints, zoom state transitions, atmosphere data invariants), write a short `extends SceneTree` script in `scripts/_tmp_<x>.gd` with an `_init()` that constructs the relevant objects (or instances the scene + `await process_frame`) and asserts results. Print `PASSED`/`FAILED` and `quit(0/1)`. **Delete the script and its `.uid`** after the run.
 
-  ```
-  "C:\Users\itaia\OneDrive\Desktop\Godot\Godot_v4.6.3-stable_win64_console.exe" --headless --path "C:\Users\itaia\git\godot\basic-crawler" --script res://tests/smoke_test.gd
-  ```
-
-  Pass = exit 0 with `SMOKE TEST PASSED` and no `SCRIPT ERROR` lines; failures print `SMOKE TEST FAILURE: ...` and exit 1. It's a dev-only tool (never referenced by `game.tscn`), so it doesn't affect the game or exports. Re-run it after touching turn/combat/input code.
+**Adding a new `class_name` requires registering it** before a plain `--script` headless run can resolve the name. Run an editor pass once: `--headless --editor --quit --path <project>` (watch for `update_scripts_classes | <YourClass>`), then validate normally.
 
 ## Architecture
 
-**No autoloads.** Shared code is exposed via `class_name`: `GameData`, `DungeonGenerator`, `FOV`, `Monster`. The runnable scene is `scenes/game.tscn`; `scripts/game.gd` is the root controller and owns essentially all game state and turn logic.
+**No autoloads.** Shared code is exposed via `class_name`: `GameData`, `DungeonGenerator`, `FOV`, `Monster`. The runnable scene is `scenes/game.tscn`; `scripts/game.gd` is the root controller and owns nearly all gameplay state and turn logic (currently ~1200 lines — proposed split documented in chat history; not refactored yet).
 
-Scene tree: `Game (Node2D, game.gd)` → `DungeonRenderer (Node2D)`, `Player (Node2D, player.gd)` → `Camera (Camera2D)`, `UI (CanvasLayer)` → `MessageLog`, `StatusBar` (both `RichTextLabel`). Monsters and the two full-screen overlays (character creation, inventory) are created at runtime as children of `Game`/`UI`.
+Scene tree: `Game (Node2D, game.gd)` → `DungeonRenderer (Node2D)`, `Player (Node2D, player.gd)` → `Camera (Camera2D)`, `UI (CanvasLayer)` → `MessageLog`, `StatusBar` (both `RichTextLabel`). The full-screen character-creation overlay and the right-docked side panel (currently holding the inventory) are created at runtime as children of `UI`. Monsters are created at runtime as children of `Game`.
 
-- **`game_data.gd`** — single source of truth for data and pure helpers: `Tile` enum + glyph/color/passability predicates; grid constants (`CELL`, `MAP_W=80`, `MAP_H=21`, `FONT_SIZE`, `FOV_RADIUS`); `MonsterKind` enum + `MONSTERS` stat table; `ItemKind` enum + `ITEMS` table (`is_potion()` keys off each item's `category`); dice (`roll`, `roll_ability` = 4d6-drop-lowest) and Basic Fantasy `ability_mod`.
-- **`dungeon_generator.gd`** — pure data, no nodes. Places room **floor rects** (spaced `grow(3)` apart so wall rings never touch), builds a wall ring per room, then connects rooms with a **minimum spanning tree**; corridors are carved by **BFS through empty void only** (never stepping on walls/floors/doors), punching exactly one perpendicular door per end. Then adds *mess*: a few extra MST-edge connections (loops/crossings) and random dead-end stubs. `rooms` holds FLOOR-only rects (walls are the surrounding ring).
-- **`fov.gd`** — static recursive shadowcasting (RogueBasin 8-octant). `game.gd` layers NetHack **lit rooms** on top (standing in a room reveals the whole room + ring).
-- **`dungeon_renderer.gd`** — custom `_draw()` over the whole map; **imitates ASCII with a monospace `SystemFont` (`resources/mono_font.tres`), not a TileMap**. Walls and corridors are drawn as connected line/band primitives (not glyphs) so they read as solid; floors/doors/stairs/items are `draw_string` glyphs. Honors fog via `visible_cells`/`explored_cells`; `reveal_all` is the F6 debug override. Holds an `items` dict reference (set once by `game.gd`) and draws floor items, remembered once explored.
-- **`player.gd`** — `extends Node2D`, **no `class_name`**. Holds the six ability scores, HP/XP/level, gold, and `inventory`. Combat values are **derived methods**, not stored: `str_mod/dex_mod/con_mod`, `armor_class()` (= base armor 14 + DEX), `melee_attack_bonus()` (= level + STR), `damage_bonus()`, `gain_level_hp()`. Draws `@` over a black cell; `grid_pos` is logical (instant), screen `position` is **tweened** (`move_to`); `place_at()` teleports and kills any in-flight tween. `roll_new_character()` re-rolls everything for a new game.
-- **`monster.gd`** — `class_name Monster`, mirrors the player node (draws its letter on a black cell, tweened `move_to`/`place_at`). Carries `kind` (index into `GameData.MONSTERS`) and `hp`.
+- **`game_data.gd`** — single source of truth for data and pure helpers. `Tile` enum includes `PILLAR` (real blocking tile). Grid constants (`CELL`, `MAP_W=80`, `MAP_H=21`, `FONT_SIZE`, `FOV_RADIUS`). `MonsterKind` + `MONSTERS` stat table (each row carries `morale`). `ItemKind` + `ITEMS` table (weapon/armor/shield/potion; `two_handed` flag; predicates `is_weapon`/`is_armor`/`is_shield`/`is_potion`/`is_two_handed`/`is_pillar`). Tile predicates `is_passable`/`is_transparent` are **whitelists** — `PILLAR` is intentionally absent from both. `Mood` enum + `mood_color()` + `apply_mood(color, mood)` (10% lerp toward mood color; intentionally subtle). Dice helpers (`roll`, `roll_ability` = 4d6-drop-lowest) and Basic Fantasy `ability_mod`.
+
+- **`dungeon_generator.gd`** — pure data, no nodes. Places **floor rects** (spaced `grow(3)` apart so wall rings never touch), builds a wall ring per room, connects rooms with a **minimum spanning tree**; corridors are carved by **BFS through empty void only** (never stepping on walls/floors/doors), punching one perpendicular door per end. Then adds *mess* (a few extra MST-edge connections and dead-end stubs). After stairs, places **pillars** (`_add_pillars` → symmetric patterns: central / 2-symmetric / 4-corner; never on stairs or adjacent to doors; only commits a pattern if a flood-fill confirms the room's floor stays connected). Finally builds the **atmosphere layer**: `room_moods: Array[int]` (parallel to `rooms`), `tile_room: Dictionary[Vector2i,int]` covering each room's floor *and* wall ring (renderer uses `tile_room_at(cell)`), and sparse `wall_cracks`/`floor_details` decorations. Generation order matters: every later step uses `get_tile == FLOOR` filters that auto-exclude stairs, pillars, etc.
+
+- **`fov.gd`** — static recursive shadowcasting (RogueBasin 8-octant). `game.gd._update_fov` overlays NetHack-style **lit rooms** on top (standing in a room reveals the whole room + ring). Side effect: inside a lit room you can see "behind" your own pillars — the shadowcast still blocks behind pillars when the player is *outside* the room.
+
+- **`dungeon_renderer.gd`** — custom `_draw()` over the whole map, monospace `SystemFont` (`resources/mono_font.tres`); **not a TileMap**. Hot loop honors fog via `visible_cells`/`explored_cells`; `reveal_all` is the F6 debug override. Drawing rules:
+  - **Floors**: flat stone rectangles, mood-tinted via `dungeon.tile_room_at`. Sparse `floor_details` (crack / stain / moss / rubble) overlay only on plain `FLOOR` cells (skipped for cells routed through item/door/stairs/pillar branches).
+  - **Walls**: **filled cell blocks** in `COLOR_WALL.darkened(0.6)`, with a thin warm highlight on edges that face open space (`_is_open_space`); a sparse `wall_cracks` overlay sits on top. Walls inherit the room mood through the input color.
+  - **Corridors**: two-pass connected bands — wider darker edge + narrower lighter core — to read as carved stone rather than highways. **Mood-neutral.**
+  - **Doors**: closed/locked = thin wood slab spanning the passage (orientation derived from wall neighbors); open = floor opening with a small leaf hint against the jamb.
+  - **Pillars**: capsule-shaped column with a lit top cap; body is `COLOR_PILLAR` (cool, distinct from warm walls), mood-tinted.
+  - **`_dim(color)`**: desaturate 65% + darken 0.5 — applied to every explored-but-not-visible cell.
+  - Holds an `items` dict reference (set once by `game.gd`); items render with a faint colored glow and remain after exploration.
+
+- **`player.gd`** — `extends Node2D`, **no `class_name`** (so the loose-typing pattern below holds). Holds six ability scores, HP/XP/level, gold, `inventory`, `fatigued`, equipment slots `equipped_weapon/armor/shield` (`-1` = none), and `in_combat` (toggled by game.gd; drives a faint warm combat ring). Combat values are **derived methods**, not stored:
+  - `armor_class()` = `(equipped_armor ? ITEMS[armor].ac : BASE_AC=11) + (equipped_shield ? SHIELD_AC=1 : 0) + dex_mod()`
+  - `weapon_dmg_n/d()` from the equipped weapon, else `UNARMED_DMG_N/D = 1/2`
+  - `melee_attack_bonus()` = `level + str_mod()`, `damage_bonus()` = `str_mod()`
+  - `gain_level_hp()` rolls `1dHIT_DIE(=8) + con_mod`
+  - `set_combat_highlight(on)` toggles the ring and `queue_redraw()`s.
+  Draws `@` centered on a dark token; `grid_pos` is logical (set instantly), screen `position` is **tweened**; `place_at()` teleports and kills any in-flight tween.
+
+- **`monster.gd`** — `class_name Monster`, mirrors the player node visually (letter glyph on a dark token, tweened `move_to`/`place_at`). Carries `kind` (index into `MONSTERS`), `hp`/`max_hp`, and two morale flags: `fleeing`, `morale_checked` (one-shot guard for the half-HP trigger).
 
 ### Turn & combat model (central to `game.gd`)
 
-- A **round** is `_run_round(player_action: Callable)`. Player input classifies the intent and passes a *callable* (`_do_move_action`/`_do_kick_action`/`_do_quaff_action`, bound with args) — the action is **re-derived at execution time** so it stays correct if monsters move first.
-- **Group initiative (Basic Fantasy):** when combat is joined (`_engaged()` = an active monster within `ENGAGE_RANGE`), both sides roll 1d6 each round; the higher side takes its whole phase first (player wins ties). The roll is shown in the log.
-- **Monsters** (`_monsters_act` → `_monster_take_turn`): active only when in the player's current view (`_last_visible`); greedy-chase toward the player, attack when adjacent. Occupancy is tracked in `_monster_at` (Vector2i→Monster), kept in sync on every move/kill.
-- **Combat:** ascending AC; attack = d20 + bonus vs AC; rolls shown in the message log. Player death blocks input until **F5**. Items live in `_items_at` (Vector2i→Dictionary); walking onto a cell auto-picks-up.
-- UI state flags gate input: `_creating` (character screen), `_inventory_open`, `_awaiting_kick`, `_awaiting_quaff`, `_player_alive`, `_player.is_moving`.
+- A **round** is `_run_round(player_action: Callable)`. Player input classifies the intent and passes a *callable* (`_do_move_action`/`_do_kick_action`/`_do_close_action`/`_do_wield_action`/`_do_wear_action`/`_do_quaff_action`) — the action is **re-derived at execution time** so it stays correct if monsters move first. `_run_round` finishes with `_update_fov / _update_status / _update_combat_camera_zoom`.
+- **Group initiative (Basic Fantasy):** when `_engaged()` is true (an active monster within `ENGAGE_RANGE = 5` and in `_last_visible`), both sides roll 1d6; higher takes its whole phase first, player wins ties. The roll is logged.
+- **Monster AI:** active only when in the player's current view. Greedy chase via `_choose_monster_step`; fleeing monsters move away via `_choose_flee_step` and only attack if **cornered + adjacent**. `_monster_can_enter` consults `is_passable`, so pillars and walls are naturally avoided. Occupancy is tracked in `_monster_at` (Vector2i→Monster), kept in sync on every move/kill.
+- **Combat log format** (consistent for both sides): `"<Name> attacks/You attack ...: d20 R + bonus [- fatigue] = total vs AC X -> HIT|MISS"`, then on hit `"Damage: <source> NdM <roll> + bonus = total"`. HIT/MISS and morale `HOLDS`/`FLEES` are colored via BBCode (`_msg_log.bbcode_enabled = true`).
+- **Fatigue** (`FATIGUE_PENALTY = 2`) subtracts from attack rolls only, shown as its own term in the calc when present.
+- **Morale (2d6):** triggers (a) first time `m.hp ≤ m.max_hp/2` (`_check_half_hp_morale`, guarded by `m.morale_checked`), and (b) for each living non-fleeing monster within `MORALE_SIGHT_RANGE = 6` of a freshly-slain ally that is in `_last_visible` (`_check_ally_death_morale`, called from `_kill_monster`). Roll over the score = `FLEES` (sets `m.fleeing`).
+- **Rest** (`_try_rest`) is **abstracted as `SLEEP_TURNS = 15` danger rolls**, *not* a fully simulated 15 monster turns — nothing actually moves while you sleep. Per-turn chances are tuned for cumulative risk: closed-room `REST_INTERRUPT_SAFE = 0.01` → ~14%, open `REST_INTERRUPT_OPEN = 0.15` → ~91%. First fatigue onset explains itself in the log (`was_fatigued` guard).
+- **Battle zoom** (`_update_combat_camera_zoom`): `should_zoom = _player.hp > 0 and _engaged()`. `_set_combat_zoom(active)` early-returns if state unchanged, kills any in-flight tween, and tweens `_camera.zoom` between `CAMERA_ZOOM_NORMAL`/`CAMERA_ZOOM_COMBAT (1.12)` with `TRANS_SINE`/`EASE_OUT` over `CAMERA_ZOOM_DURATION = 0.25`. Also drives the player's combat highlight. `_reset_combat_zoom()` is the instant reset used on `_regenerate`. Called from the same places that already update FOV/status after turns; never per frame.
+- **UI gating:** input flags `_creating`, `_inventory_open`, `_awaiting_kick`/`_quaff`/`_close`/`_wield`/`_wear`, `_player_alive`, `_player.is_moving`.
 
 ### Input map
 
-Arrows / numpad 8·2·4·6 move (move into a monster = attack, into a closed door = open, locked door = must kick). `k`+direction kick. `i` inventory overlay (free). `q` quaff → potion-selection prompt (letters), turn-consuming. Debug: **F5** new dungeon + character screen, **F6** reveal map.
+- Arrows / numpad 8·2·4·6: move. Bumping a monster = attack; closed door = open (turn-consuming); locked door = "must kick"; **pillar** = blocked with `"A stone pillar blocks the way."` (no turn, like a wall bump); wall bump silent.
+- `k` + direction: kick. `c` + direction: close door. `q`: quaff (potion picker). `w`: wield (weapon picker). `W` (shift+w): wear (armor/shield picker — refuses a shield while a 2H weapon is wielded, *before* spending a turn). `R`: rest/sleep.
+- `i`: toggle the right-docked **side panel** (currently shows inventory grouped by category with equipped markers and effective stats). The panel is opaque and dev-toggled; it's not a full-screen overlay.
+- Debug: **F5** new dungeon + character screen, **F6** reveal map.
 
 ## GDScript gotchas in this project
 
 - **"Inferred Variant" warnings are treated as errors.** Typed-array `arr.back()`/`arr[i]`, `Dictionary` lookups, untyped-array elements, and any expression involving an unsafe property all return `Variant`, so results used in `var x :=` need explicit annotation (`var r: Rect2i = rooms[i]`, `var idx: int = event.keycode - KEY_A`). This is the most common parse failure here.
-- **`_player` and `_monster_at` values are typed `Node2D`/`Monster` accessed loosely**, so `_player.foo` compiles even if `foo` doesn't exist and only fails at runtime (this is why renamed fields must be grepped). `player.gd` deliberately has no `class_name`.
+- **`_player` and `_monster_at` values are typed `Node2D`/`Monster` accessed loosely**, so `_player.foo` compiles even if `foo` doesn't exist and only fails at runtime. This is why renamed fields must be grepped, and why the smoke test exists. `player.gd` deliberately has no `class_name`.
 - New `class_name` scripts need the editor-pass registration described above before headless runs see them.
+- Renderer drawing primitives (`draw_rect`, `draw_line`, `draw_circle`, `draw_arc`) must be called inside `_draw()` — calling them from a `--script` throwaway prints "Drawing is only allowed inside NOTIFICATION_DRAW". To exercise rendering, instance the scene and `await process_frame`.
+- BBCode is enabled on `MessageLog` and `StatusBar`. Single-letter square-bracket option markers like `[b]` collide with the **bold** tag — keep selection prompts in `a) ...` style, not `[a] ...`. (`_selection_prompt` does this.)
 - Indentation is **tabs** (all existing scripts use tabs).
