@@ -25,6 +25,13 @@ Exit 0 with no error lines means scripts compiled and `Game._ready()` ran. Impor
 - **Headless boots the scene but does not simulate input or combat.** Whole code paths (attacking, quaffing, monster turns, overlays) never execute, so runtime errors there slip through `--quit-after`. After renaming/removing a field or method, **grep every call site** rather than relying on the boot check.
 - **Adding a new `class_name` requires registering it** before a plain headless run can resolve it. Run an editor pass once: `--headless --editor --quit --path <project>` (watch for `update_scripts_classes | <YourClass>`), then validate normally.
 - **To exercise logic headless**, write a throwaway `extends SceneTree` script with an `_init()` that constructs objects and `print()`s results, run it with `--script res://scripts/_tmp.gd`, then delete it (and its `.uid`). This is how stat/item math has been spot-checked.
+- **Gameplay smoke test (`tests/smoke_test.gd`).** A persistent `extends SceneTree` script that instances the real `game.tscn`, waits a frame for `_ready`, then drives one move and one bump-attack through the actual turn/combat code (`_try_move` → `_run_round` → `_do_move_action`/`_attack_monster`). This covers the move/combat paths the boot check skips. Run:
+
+  ```
+  "C:\Users\itaia\OneDrive\Desktop\Godot\Godot_v4.6.3-stable_win64_console.exe" --headless --path "C:\Users\itaia\git\godot\basic-crawler" --script res://tests/smoke_test.gd
+  ```
+
+  Pass = exit 0 with `SMOKE TEST PASSED` and no `SCRIPT ERROR` lines; failures print `SMOKE TEST FAILURE: ...` and exit 1. It's a dev-only tool (never referenced by `game.tscn`), so it doesn't affect the game or exports. Re-run it after touching turn/combat/input code.
 
 ## Architecture
 

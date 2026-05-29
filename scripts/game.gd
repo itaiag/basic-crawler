@@ -2,11 +2,17 @@ extends Node2D
 
 const TOP_PANEL_H := 72
 const BOTTOM_PANEL_H := 60
+const RIGHT_PANEL_W := 340
 const ENGAGE_RANGE := 5
 
-# Rest/sleep tuning (per sleep-turn interruption chance).
+# Rest/sleep tuning. A rest is *abstracted* as SLEEP_TURNS danger rolls -- one
+# per advanced turn -- NOT 15 fully simulated monster turns. Nothing actually
+# moves while you sleep; each turn only rolls against an interruption chance.
+# Per-turn chances are picked for cumulative risk across a whole rest:
+#   safe (closed room): 1 - (1 - 0.01)^15  ~= 14%
+#   open / unsafe:      1 - (1 - 0.15)^15  ~= 91%
 const SLEEP_TURNS := 15
-const REST_INTERRUPT_SAFE := 0.02
+const REST_INTERRUPT_SAFE := 0.01
 const REST_INTERRUPT_OPEN := 0.15
 const FATIGUE_PENALTY := 2
 
@@ -48,6 +54,7 @@ func _ready() -> void:
 	_setup_camera()
 	_setup_ui()
 	_setup_overlays()
+	_setup_side_panel()
 
 	var start := _dungeon.get_start_pos()
 	_player.grid_pos = start
@@ -103,8 +110,42 @@ func _setup_ui() -> void:
 func _setup_overlays() -> void:
 	_create_bg = _new_overlay()
 	_create_label = _create_bg.get_child(0) as RichTextLabel
-	_inv_bg = _new_overlay()
-	_inv_label = _inv_bg.get_child(0) as RichTextLabel
+
+
+# A right-docked panel beside the dungeon (between the message and status bars).
+# Holds the inventory for now; meant to host other content (lore, etc.) later.
+func _setup_side_panel() -> void:
+	var font := preload("res://resources/mono_font.tres")
+	var vp := get_viewport().get_visible_rect().size
+	var panel_h := vp.y - TOP_PANEL_H - BOTTOM_PANEL_H
+
+	_inv_bg = ColorRect.new()
+	_inv_bg.color = Color(0.04, 0.04, 0.04)
+	_inv_bg.position = Vector2(vp.x - RIGHT_PANEL_W, TOP_PANEL_H)
+	_inv_bg.size = Vector2(RIGHT_PANEL_W, panel_h)
+	_inv_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_inv_bg.visible = false
+	$UI.add_child(_inv_bg)
+
+	_inv_label = RichTextLabel.new()
+	_inv_label.bbcode_enabled = true
+	_inv_label.scroll_active = false
+	_inv_label.position = Vector2.ZERO
+	_inv_label.size = Vector2(RIGHT_PANEL_W, panel_h)
+	_inv_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.04, 0.04, 0.04)
+	style.border_color = Color(0.32, 0.32, 0.32)
+	style.border_width_left = 1
+	style.content_margin_left = 14
+	style.content_margin_top = 12
+	style.content_margin_right = 10
+	_inv_label.add_theme_stylebox_override("normal", style)
+	_inv_label.add_theme_font_override("normal_font", font)
+	_inv_label.add_theme_font_override("bold_font", font)
+	_inv_label.add_theme_font_size_override("normal_font_size", 16)
+	_inv_label.add_theme_color_override("default_color", Color(0.85, 0.85, 0.85))
+	_inv_bg.add_child(_inv_label)
 
 
 func _new_overlay() -> ColorRect:
@@ -145,7 +186,7 @@ func _begin_play() -> void:
 	_creating = false
 	_create_bg.visible = false
 	_add_message("Welcome to the dungeon, Adventurer the Human Fighter!")
-	_add_message("Commands: arrows move, k kick, c close door, i inventory, q quaff, R rest.")
+	_add_message("Commands: arrows move, k kick, c close door, i inventory, q quaff, w wield, W wear, R rest.")
 	_add_message("[Debug] F5: new dungeon   F6: reveal map")
 	_update_status()
 
@@ -189,27 +230,82 @@ func _open_inventory() -> void:
 
 
 func _update_inv_label() -> void:
-	var gold: int = _player.gold
-	var inv: Array = _player.inventory
-	var t := "\n\n\n\n[center][font_size=30][b]Inventory[/b][/font_size]\n\n"
-	t += "Gold:  %d\n\n" % gold
-	if inv.is_empty():
-		t += "(carrying nothing else)\n"
-	else:
-		var counts := {}
-		for k in inv:
-			counts[k] = int(counts.get(k, 0)) + 1
-		var idx := 0
-		for k in counts.keys():
-			var kind: int = k
-			var c: int = counts[k]
-			var iname: String = GameData.ITEMS[kind]["name"]
-			if c != 1:
-				iname += "s"
-			t += "%s)  %d  %s\n" % [char(97 + idx), c, iname]
-			idx += 1
-	t += "\n\n[ any key ] close[/center]"
+	var t := "[font_size=22][b]Inventory[/b][/font_size]\n\n"
+	t += "Gold: %d\n" % int(_player.gold)
+
+	# Bucket distinct kinds by category, preserving inventory order.
+	var weapons: Array[int] = []
+	var armor: Array[int] = []
+	var potions: Array[int] = []
+	var other: Array[int] = []
+	var seen := {}
+	for k in _player.inventory:
+		var kind: int = k
+		if seen.has(kind):
+			continue
+		seen[kind] = true
+		if GameData.is_weapon(kind):
+			weapons.append(kind)
+		elif GameData.is_armor(kind) or GameData.is_shield(kind):
+			armor.append(kind)
+		elif GameData.is_potion(kind):
+			potions.append(kind)
+		else:
+			other.append(kind)
+
+	t += _inv_section("Weapons", weapons)
+	t += _inv_section("Armor", armor)
+	t += _inv_section("Potions", potions)
+	t += _inv_section("Other", other)
+
+	if weapons.is_empty() and armor.is_empty() and potions.is_empty() and other.is_empty():
+		t += "\n(carrying nothing)\n"
+
+	t += "\n[color=#888888]i to close[/color]"
 	_inv_label.text = t
+
+
+func _inv_section(title: String, kinds: Array[int]) -> String:
+	if kinds.is_empty():
+		return ""
+	var s := "\n[b]%s[/b]\n" % title
+	for kind in kinds:
+		s += _inv_item_line(kind)
+	return s
+
+
+func _inv_item_line(kind: int) -> String:
+	var data: Dictionary = GameData.ITEMS[kind]
+	var line := "  " + str(data["name"])
+	var count := _count_item(kind)
+	if count > 1:
+		line += " x%d" % count
+	var marker := _equip_marker(kind)
+	if marker != "":
+		line += " [color=#c8a850]%s[/color]" % marker
+	line += "\n"
+	if GameData.is_weapon(kind):
+		var hit: int = _player.melee_attack_bonus()
+		var db: int = _player.damage_bonus()
+		var dmg := "%dd%d" % [int(data["dmg_n"]), int(data["dmg_d"])]
+		if db != 0:
+			dmg += "%+d" % db
+		line += "      [color=#999999]%+d to hit, %s dmg[/color]\n" % [hit, dmg]
+	elif GameData.is_armor(kind):
+		line += "      [color=#999999]AC %d[/color]\n" % int(data["ac"])
+	elif GameData.is_shield(kind):
+		line += "      [color=#999999]+1 AC[/color]\n"
+	return line
+
+
+func _equip_marker(kind: int) -> String:
+	if kind == _player.equipped_weapon:
+		return "(wielded)"
+	if kind == _player.equipped_armor:
+		return "(worn)"
+	if kind == _player.equipped_shield:
+		return "(shield)"
+	return ""
 
 
 func _try_quaff() -> void:
@@ -229,12 +325,12 @@ func _try_quaff() -> void:
 	var prompt := "Quaff which potion?  "
 	for i in range(_quaff_options.size()):
 		var kind: int = _quaff_options[i]
-		prompt += "[%s] %s" % [char(97 + i), GameData.ITEMS[kind]["name"]]
+		prompt += "%s) %s" % [char(97 + i), GameData.ITEMS[kind]["name"]]
 		var c := _count_item(kind)
 		if c > 1:
 			prompt += " (%d)" % c
 		prompt += "   "
-	prompt += "[Esc] cancel"
+	prompt += "Esc to cancel"
 	_add_message(prompt)
 	_awaiting_quaff = true
 
@@ -278,6 +374,8 @@ func _try_rest() -> void:
 
 	var safe := _in_closed_room()
 	var chance := REST_INTERRUPT_SAFE if safe else REST_INTERRUPT_OPEN
+	# Abstracted rest: advance the clock and roll for danger each turn instead of
+	# running real monster turns. The first failed roll wakes the player.
 	var interrupted := false
 	for _i in range(SLEEP_TURNS):
 		_turn += 1
@@ -286,12 +384,16 @@ func _try_rest() -> void:
 			break
 
 	if interrupted:
+		var was_fatigued: bool = _player.fatigued
 		_player.fatigued = true
 		var mname := _spawn_wandering_near_player()
 		if mname != "":
-			_add_message("A %s wanders in and wakes you!  You feel groggy." % mname)
+			_add_message("A %s wanders in and wakes you!" % mname)
 		else:
-			_add_message("Something disturbs your sleep.  You feel groggy.")
+			_add_message("Something disturbs your sleep.")
+		# Spell out what fatigue does the first time it sets in; don't repeat it.
+		if not was_fatigued:
+			_add_message("You are groggy from lost sleep: -%d to hit until you sleep soundly." % FATIGUE_PENALTY)
 	else:
 		var amount := maxi(1, GameData.roll(1, 8) + int(_player.con_mod()))
 		_player.heal(amount)
@@ -581,19 +683,19 @@ func _do_wear_action(kind: int) -> void:
 		_add_message("You ready your %s." % iname)
 	else:
 		_player.equipped_armor = kind
-		_add_message("You don the %s." % iname)
+		_add_message("You put on the %s." % iname)
 
 
 func _selection_prompt(label: String, options: Array[int]) -> String:
 	var prompt := label + "  "
 	for i in range(options.size()):
 		var kind: int = options[i]
-		prompt += "[%s] %s" % [char(97 + i), GameData.ITEMS[kind]["name"]]
+		prompt += "%s) %s" % [char(97 + i), GameData.ITEMS[kind]["name"]]
 		var c := _count_item(kind)
 		if c > 1:
 			prompt += " (%d)" % c
 		prompt += "   "
-	prompt += "[Esc] cancel"
+	prompt += "Esc to cancel"
 	return prompt
 
 
@@ -728,6 +830,8 @@ func _regenerate() -> void:
 	_awaiting_kick = false
 	_awaiting_quaff = false
 	_awaiting_close = false
+	_awaiting_wield = false
+	_awaiting_wear = false
 	_turn = 1
 	_player_alive = true
 	_player.place_at(_dungeon.get_start_pos())
@@ -1004,5 +1108,5 @@ func _update_status() -> void:
 	var line2 := "$:%d  HP:%d(%d)  Pw:0(0)  AC:%d  Exp:%d/%d  T:%d" % [
 		gold, maxi(0, hp), max_hp, ac, lvl, xp, _turn]
 	if fatigued:
-		line2 += "  Fatigued"
+		line2 += "  Fatigued(-%d to hit)" % FATIGUE_PENALTY
 	_status.append_text(line2)
