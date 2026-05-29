@@ -4,6 +4,7 @@ signal finished_moving
 
 var grid_pos := Vector2i.ZERO
 var is_moving := false
+var in_combat := false  # toggled by game.gd; drives a subtle combat ring
 
 var strength := 10
 var dexterity := 10
@@ -41,12 +42,25 @@ func _ready() -> void:
 
 
 func _draw() -> void:
-	var cw := GameData.CELL.x
-	var ch := GameData.CELL.y
-	draw_rect(Rect2(Vector2.ZERO, Vector2(cw, ch)), Color.BLACK)
-	var ascent := _font.get_ascent(GameData.FONT_SIZE)
-	draw_string(_font, Vector2(0, ascent), "@", HORIZONTAL_ALIGNMENT_CENTER,
-		float(cw), GameData.FONT_SIZE, Color.WHITE)
+	var cw := float(GameData.CELL.x)
+	var ch := float(GameData.CELL.y)
+	var center := Vector2(cw * 0.5, ch * 0.5)
+	draw_circle(center, 7.5, GameData.COLOR_TOKEN_BG)
+	if in_combat:
+		# Faint warm ring while engaged. Toggled by combat state, not per frame.
+		draw_arc(center, 9.0, 0.0, TAU, 24,
+			Color(GameData.COLOR_COMBAT_HIGHLIGHT, 0.7), 2.0, true)
+	var fs := GameData.FONT_SIZE
+	var baseline := (ch - (_font.get_ascent(fs) + _font.get_descent(fs))) * 0.5 + _font.get_ascent(fs)
+	draw_string(_font, Vector2(0, baseline), "@", HORIZONTAL_ALIGNMENT_CENTER,
+		cw, fs, Color.WHITE)
+
+
+func set_combat_highlight(on: bool) -> void:
+	if in_combat == on:
+		return
+	in_combat = on
+	queue_redraw()
 
 
 func move_to(target: Vector2i) -> void:

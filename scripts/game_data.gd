@@ -19,11 +19,16 @@ const MAP_H := 21
 const FONT_SIZE := 20
 const FOV_RADIUS := 8
 
-const COLOR_WALL := Color(0.80, 0.50, 0.20)
+const COLOR_WALL := Color(0.42, 0.32, 0.22)  # muted warm stone (used as the wall *highlight*; the body is derived darker)
 const COLOR_FLOOR := Color(0.42, 0.42, 0.42)
-const COLOR_CORRIDOR := Color(0.62, 0.62, 0.62)
-const COLOR_DOOR := Color(0.95, 0.78, 0.25)
+const COLOR_FLOOR_BG := Color(0.12, 0.12, 0.14)  # dark stone fill for room floors
+const COLOR_CORRIDOR := Color(0.21, 0.18, 0.15)  # dark earthy tunnel; drawn as a narrow core with a darker edge
+const COLOR_DOOR := Color(0.52, 0.37, 0.18)  # muted wood, not neon yellow
 const COLOR_STAIRS := Color.WHITE
+
+# Visual-polish tokens/highlights drawn behind glyphs (player, monsters, combat).
+const COLOR_TOKEN_BG := Color(0.06, 0.06, 0.08)
+const COLOR_COMBAT_HIGHLIGHT := Color(0.95, 0.55, 0.20)
 
 enum MonsterKind { SNAKE, RAT, SPIDER, GOBLIN }
 

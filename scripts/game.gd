@@ -94,9 +94,12 @@ func _setup_ui() -> void:
 	_msg_log.focus_mode = Control.FOCUS_NONE
 	_msg_log.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var msg_style := StyleBoxFlat.new()
-	msg_style.bg_color = Color.BLACK
-	msg_style.content_margin_left = 8
+	msg_style.bg_color = Color(0.05, 0.05, 0.07)
+	msg_style.content_margin_left = 10
 	msg_style.content_margin_top = 4
+	msg_style.content_margin_right = 10
+	msg_style.border_color = Color(0.20, 0.20, 0.26)
+	msg_style.border_width_bottom = 1
 	_msg_log.add_theme_stylebox_override("normal", msg_style)
 	_msg_log.add_theme_color_override("default_color", Color(0.85, 0.85, 0.85))
 	_msg_log.add_theme_font_override("normal_font", font)
@@ -108,9 +111,12 @@ func _setup_ui() -> void:
 	_status.focus_mode = Control.FOCUS_NONE
 	_status.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var status_style := StyleBoxFlat.new()
-	status_style.bg_color = Color.BLACK
-	status_style.content_margin_left = 8
+	status_style.bg_color = Color(0.05, 0.05, 0.07)
+	status_style.content_margin_left = 10
 	status_style.content_margin_top = 4
+	status_style.content_margin_right = 10
+	status_style.border_color = Color(0.20, 0.20, 0.26)
+	status_style.border_width_top = 1
 	_status.add_theme_stylebox_override("normal", status_style)
 	_status.add_theme_color_override("default_color", Color(0.85, 0.85, 0.85))
 	_status.add_theme_font_override("normal_font", font)
@@ -787,8 +793,9 @@ func _attack_monster(m: Monster) -> void:
 		calc += " %s" % _signed(-fatigue)  # show the fatigue penalty as its own term
 	calc += " = %d" % total
 	var hit := total >= target_ac
+	var outcome := "[color=#6cc06c]HIT[/color]" if hit else "[color=#9a9a9a]MISS[/color]"
 	_add_message("You attack %s: %s vs AC %d -> %s" %
-		[_cap(mname), calc, target_ac, "HIT" if hit else "MISS"])
+		[_cap(mname), calc, target_ac, outcome])
 	if not hit:
 		return
 
@@ -848,8 +855,9 @@ func _morale_check(m: Monster) -> void:
 	var morale: int = data["morale"]
 	var roll := randi_range(1, 6) + randi_range(1, 6)
 	var held := roll <= morale
+	var verdict := "[color=#9bd06b]HOLDS[/color]" if held else "[color=#d09040]FLEES[/color]"
 	_add_message("%s morale: 2d6 %d vs %d -> %s" %
-		[_cap(nm), roll, morale, "HOLDS" if held else "FLEES"])
+		[_cap(nm), roll, morale, verdict])
 	if not held:
 		m.fleeing = true
 
@@ -1082,6 +1090,7 @@ func _set_combat_zoom(active: bool) -> void:
 	if _combat_zoom_active == active:
 		return
 	_combat_zoom_active = active
+	_player.set_combat_highlight(active)
 	if _camera_zoom_tween:
 		_camera_zoom_tween.kill()
 	var target_zoom := CAMERA_ZOOM_COMBAT if active else CAMERA_ZOOM_NORMAL
@@ -1095,6 +1104,7 @@ func _reset_combat_zoom() -> void:
 	if _camera_zoom_tween:
 		_camera_zoom_tween.kill()
 	_combat_zoom_active = false
+	_player.set_combat_highlight(false)
 	_camera.zoom = CAMERA_ZOOM_NORMAL
 
 
@@ -1190,8 +1200,9 @@ func _monster_attack(m: Monster) -> void:
 	var d20 := randi_range(1, 20)
 	var total := d20 + atk
 	var hit := total >= pac
+	var outcome := "[color=#d07070]HIT[/color]" if hit else "[color=#9a9a9a]MISS[/color]"
 	_add_message("%s attacks you: d20 %d %s = %d vs AC %d -> %s" %
-		[_cap(mname), d20, _signed(atk), total, pac, "HIT" if hit else "MISS"])
+		[_cap(mname), d20, _signed(atk), total, pac, outcome])
 	if not hit:
 		return
 
@@ -1252,8 +1263,15 @@ func _update_status() -> void:
 	_status.clear()
 	_status.append_text("Adventurer the Fighter     St:%d Dx:%d Co:%d In:%d Wi:%d Ch:%d     Lawful\n" %
 		[st, dx, co, intel, wi, cha])
-	var line2 := "$:%d  HP:%d(%d)  Pw:0(0)  AC:%d  Exp:%d/%d  T:%d" % [
-		gold, maxi(0, hp), max_hp, ac, lvl, xp, _turn]
+	# Colour the values that matter at a glance; HP shifts green->amber->red.
+	var hp_ratio := float(maxi(0, hp)) / float(maxi(1, max_hp))
+	var hp_col := "#6cc06c"
+	if hp_ratio <= 0.33:
+		hp_col = "#d05a5a"
+	elif hp_ratio <= 0.66:
+		hp_col = "#d0c060"
+	var line2 := "$:[color=#d8b020]%d[/color]  HP:[color=%s]%d[/color](%d)  Pw:0(0)  AC:[color=#7fb0c8]%d[/color]  Exp:[color=#b08fd0]%d/%d[/color]  T:%d" % [
+		gold, hp_col, maxi(0, hp), max_hp, ac, lvl, xp, _turn]
 	if fatigued:
-		line2 += "  Fatigued(-%d to hit)" % FATIGUE_PENALTY
+		line2 += "  [color=#d08040]Fatigued(-%d to hit)[/color]" % FATIGUE_PENALTY
 	_status.append_text(line2)

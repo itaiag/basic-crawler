@@ -37,10 +37,13 @@ func _draw() -> void:
 	var color: Color = data["color"]
 	var cw := float(GameData.CELL.x)
 	var ch := float(GameData.CELL.y)
-	draw_rect(Rect2(Vector2.ZERO, Vector2(cw, ch)), Color.BLACK)
-	var ascent := _font.get_ascent(GameData.FONT_SIZE)
-	draw_string(_font, Vector2(0, ascent), glyph, HORIZONTAL_ALIGNMENT_CENTER,
-		cw, GameData.FONT_SIZE, color)
+	var center := Vector2(cw * 0.5, ch * 0.5)
+	# Subtle dark backing only -- keeps the bright glyph readable without a noisy ring.
+	draw_circle(center, 7.5, GameData.COLOR_TOKEN_BG)
+	var fs := GameData.FONT_SIZE
+	var baseline := (ch - (_font.get_ascent(fs) + _font.get_descent(fs))) * 0.5 + _font.get_ascent(fs)
+	draw_string(_font, Vector2(0, baseline), glyph, HORIZONTAL_ALIGNMENT_CENTER,
+		cw, fs, color)
 
 
 func move_to(target: Vector2i) -> void:
