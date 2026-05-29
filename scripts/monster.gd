@@ -38,7 +38,9 @@ func _draw() -> void:
 	var cw := float(GameData.CELL.x)
 	var ch := float(GameData.CELL.y)
 	var center := Vector2(cw * 0.5, ch * 0.5)
-	# Subtle dark backing only -- keeps the bright glyph readable without a noisy ring.
+	# Grounding shadow peeking out below, then a subtle dark backing -- keeps the
+	# bright glyph readable without a noisy ring.
+	draw_circle(center + Vector2(0, 4.0), 6.0, Color(0, 0, 0, 0.30))
 	draw_circle(center, 7.5, GameData.COLOR_TOKEN_BG)
 	var fs := GameData.FONT_SIZE
 	var baseline := (ch - (_font.get_ascent(fs) + _font.get_descent(fs))) * 0.5 + _font.get_ascent(fs)

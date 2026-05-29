@@ -45,6 +45,15 @@ func _draw() -> void:
 	var cw := float(GameData.CELL.x)
 	var ch := float(GameData.CELL.y)
 	var center := Vector2(cw * 0.5, ch * 0.5)
+	# Soft warm torch halo: a few concentric circles with falling alpha fake a
+	# smooth radial glow without a texture (GL-compat / web safe).
+	var warm := Color(1.0, 0.82, 0.5)
+	draw_circle(center, 26.0, Color(warm, 0.05))
+	draw_circle(center, 19.0, Color(warm, 0.06))
+	draw_circle(center, 13.0, Color(warm, 0.08))
+	draw_circle(center, 9.0, Color(warm, 0.10))
+	# Grounding shadow peeking out below the token.
+	draw_circle(center + Vector2(0, 4.0), 6.0, Color(0, 0, 0, 0.30))
 	draw_circle(center, 7.5, GameData.COLOR_TOKEN_BG)
 	if in_combat:
 		# Faint warm ring while engaged. Toggled by combat state, not per frame.

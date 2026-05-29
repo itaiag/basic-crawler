@@ -194,7 +194,17 @@ func _draw_wall(x: int, y: int, color: Color) -> void:
 	var cy := float(GameData.CELL.y)
 	var left := x * cx
 	var top := y * cy
-	draw_rect(Rect2(left, top, cx, cy), color.darkened(0.6))
+	var body := color.darkened(0.6)
+	draw_rect(Rect2(left, top, cx, cy), body)
+
+	# Lit-from-above bevel: a lighter top strip and darker bottom strip give the
+	# block a carved, three-dimensional read instead of a flat fill. Side strips
+	# are nudged a touch the same way. Subtle on purpose.
+	var strip := 3.0
+	draw_rect(Rect2(left, top, cx, strip), body.lightened(0.12))
+	draw_rect(Rect2(left, top + cy - strip, cx, strip), body.darkened(0.25))
+	draw_rect(Rect2(left, top + strip, 2.0, cy - strip * 2.0), body.lightened(0.05))
+	draw_rect(Rect2(left + cx - 2.0, top + strip, 2.0, cy - strip * 2.0), body.darkened(0.12))
 
 	var hi := Color(color.r, color.g, color.b, 0.5)
 	if _is_open_space(x, y - 1):

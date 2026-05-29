@@ -75,6 +75,7 @@ var _combat_pos_tween: Tween
 @onready var _renderer: Node2D = $DungeonRenderer
 @onready var _player: Node2D = $Player
 @onready var _camera: Camera2D = $Player/Camera
+var _light: Node2D  # torchlight overlay (scripts/light_overlay.gd), built at runtime
 @onready var _msg_log: RichTextLabel = $UI/MessageLog
 @onready var _status: RichTextLabel = $UI/StatusBar
 
@@ -85,6 +86,8 @@ func _ready() -> void:
 	_renderer.items = _items_at
 
 	_setup_camera()
+	_setup_light()
+	_setup_vignette()
 	_setup_ui()
 	_setup_overlays()
 	_setup_side_panel()
@@ -146,6 +149,43 @@ func _setup_ui() -> void:
 	_status.add_theme_color_override("default_color", Color(0.85, 0.85, 0.85))
 	_status.add_theme_font_override("normal_font", font)
 	_status.add_theme_font_size_override("normal_font_size", 16)
+
+
+# Torchlight overlay node: a world-space child that darkens visible cells by
+# distance from the player. High z_index so it draws above the dungeon renderer
+# and the runtime-spawned monsters/player tokens.
+func _setup_light() -> void:
+	_light = Node2D.new()
+	_light.set_script(load("res://scripts/light_overlay.gd"))
+	_light.z_index = 10
+	add_child(_light)
+
+
+# Screen-space radial vignette: a soft dark frame at the edges, drawn behind the
+# text labels. No shader -- a radial GradientTexture2D stretched full-screen, which
+# is GL-compatibility / web / mobile safe.
+func _setup_vignette() -> void:
+	var grad := Gradient.new()
+	grad.offsets = PackedFloat32Array([0.0, 0.55, 1.0])
+	grad.colors = PackedColorArray([
+		Color(0, 0, 0, 0.0),
+		Color(0, 0, 0, 0.0),
+		Color(0, 0, 0, 0.5)])
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill = GradientTexture2D.FILL_RADIAL
+	tex.fill_from = Vector2(0.5, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	tex.width = 256
+	tex.height = 256
+
+	var rect := TextureRect.new()
+	rect.texture = tex
+	rect.stretch_mode = TextureRect.STRETCH_SCALE
+	rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	$UI.add_child(rect)
+	$UI.move_child(rect, 0)  # behind the message log / status bar / panels
 
 
 func _setup_overlays() -> void:
@@ -931,6 +971,7 @@ func _morale_check(m: Monster) -> void:
 	var verdict := "[color=#9bd06b]HOLDS[/color]" if held else "[color=#d09040]FLEES[/color]"
 	_add_message("%s morale: 2d6 %d vs %d -> %s" %
 		[_cap(nm), roll, morale, verdict])
+	_push_combat_event(_combat_morale_block(_cap(nm), held, roll, morale))
 	if not held:
 		m.fleeing = true
 
@@ -962,6 +1003,8 @@ func _update_fov() -> void:
 
 	_last_visible = visible
 	_renderer.update_visibility(visible)
+	_light.enabled = not _renderer.reveal_all
+	_light.set_light(_player.grid_pos, visible)
 	_refresh_monster_visibility()
 
 
@@ -988,6 +1031,8 @@ func _regenerate() -> void:
 
 func _toggle_reveal() -> void:
 	_renderer.set_reveal_all(not _renderer.reveal_all)
+	_light.enabled = not _renderer.reveal_all
+	_light.queue_redraw()
 	_refresh_monster_visibility()
 	if _renderer.reveal_all:
 		_add_message("[Debug] Revealing the whole dungeon.")
@@ -1378,6 +1423,16 @@ func _combat_attack_block(header: String, hit: bool, friendly: bool, nat: String
 	t += "\n[color=#8f8f8f]Attack:[/color] %s" % attack_line
 	if hit and damage_line != "":
 		t += "\n[color=#caa05a]Damage:[/color] %s" % damage_line
+	return t
+
+
+# Morale card for the panel: a 2d6 nerve test surfaced like an attack so the
+# player sees *why* a monster turned and ran (it otherwise only hit the log).
+func _combat_morale_block(name: String, held: bool, roll: int, morale: int) -> String:
+	var result := "HOLDS" if held else "FLEES"
+	var col := "#9bd06b" if held else "#d09040"
+	var t := "[b]%s[/b]  [color=%s][b]%s[/b][/color]" % [("%s morale" % name).rpad(18), col, result]
+	t += "\n[color=#8f8f8f]Check:[/color] 2d6 %d vs %d" % [roll, morale]
 	return t
 
 
