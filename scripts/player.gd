@@ -4,7 +4,6 @@ signal finished_moving
 
 var grid_pos := Vector2i.ZERO
 var is_moving := false
-var in_combat := false  # toggled by game.gd; drives a subtle combat ring
 
 var strength := 10
 var dexterity := 10
@@ -55,21 +54,10 @@ func _draw() -> void:
 	# Grounding shadow peeking out below the token.
 	draw_circle(center + Vector2(0, 4.0), 6.0, Color(0, 0, 0, 0.30))
 	draw_circle(center, 7.5, GameData.COLOR_TOKEN_BG)
-	if in_combat:
-		# Faint warm ring while engaged. Toggled by combat state, not per frame.
-		draw_arc(center, 9.0, 0.0, TAU, 24,
-			Color(GameData.COLOR_COMBAT_HIGHLIGHT, 0.7), 2.0, true)
 	var fs := GameData.FONT_SIZE
 	var baseline := (ch - (_font.get_ascent(fs) + _font.get_descent(fs))) * 0.5 + _font.get_ascent(fs)
 	draw_string(_font, Vector2(0, baseline), "@", HORIZONTAL_ALIGNMENT_CENTER,
 		cw, fs, Color.WHITE)
-
-
-func set_combat_highlight(on: bool) -> void:
-	if in_combat == on:
-		return
-	in_combat = on
-	queue_redraw()
 
 
 func move_to(target: Vector2i) -> void:

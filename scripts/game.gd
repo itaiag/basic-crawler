@@ -33,6 +33,7 @@ const SLEEP_TURNS := 15
 const REST_INTERRUPT_SAFE := 0.01
 const REST_INTERRUPT_OPEN := 0.15
 const FATIGUE_PENALTY := 2
+const KICK_ATK_PENALTY := 2  # Basic Fantasy: kicks rolled at -2 attack
 
 var _dungeon := DungeonGenerator.new()
 var _turn := 1
@@ -191,6 +192,61 @@ func _setup_vignette() -> void:
 func _setup_overlays() -> void:
 	_create_bg = _new_overlay()
 	_create_label = _create_bg.get_child(0) as RichTextLabel
+	_setup_create_decor()
+
+
+# Frames the character-creation text: a soft warm torch-glow and a bordered
+# stone card behind the label, so the menu shares the dungeon's lit mood
+# instead of floating on flat black. No shader -- radial GradientTexture2D +
+# StyleBoxFlat, GL-compatibility / web / mobile safe.
+func _setup_create_decor() -> void:
+	var vp := get_viewport().get_visible_rect().size
+
+	var card_w := 540.0
+	var card_h := 300.0
+	var card_pos := Vector2((vp.x - card_w) * 0.5, vp.y * 0.06)
+	var card_center := card_pos + Vector2(card_w, card_h) * 0.5
+
+	# Warm radial torch-glow, larger than the card, centered behind it.
+	var grad := Gradient.new()
+	grad.offsets = PackedFloat32Array([0.0, 1.0])
+	grad.colors = PackedColorArray([
+		Color(0.95, 0.72, 0.36, 0.13),
+		Color(0.95, 0.72, 0.36, 0.0)])
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill = GradientTexture2D.FILL_RADIAL
+	tex.fill_from = Vector2(0.5, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	tex.width = 256
+	tex.height = 256
+
+	var glow := TextureRect.new()
+	glow.texture = tex
+	glow.stretch_mode = TextureRect.STRETCH_SCALE
+	var glow_size := Vector2(card_w + 360.0, card_h + 320.0)
+	glow.size = glow_size
+	glow.position = card_center - glow_size * 0.5
+	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	# Bordered dark-stone card.
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.10, 0.09, 0.08, 0.92)
+	sb.border_color = Color(0.55, 0.42, 0.22)
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(6)
+
+	var card := Panel.new()
+	card.position = card_pos
+	card.size = Vector2(card_w, card_h)
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_theme_stylebox_override("panel", sb)
+
+	# Insert behind the label (child 0); label must draw on top.
+	_create_bg.add_child(glow)
+	_create_bg.add_child(card)
+	_create_bg.move_child(glow, 0)
+	_create_bg.move_child(card, 1)
 
 
 # A right-docked panel beside the dungeon (between the message and status bars).
@@ -333,17 +389,26 @@ func _update_create_label() -> void:
 	var hp: int = _player.max_hp
 	var ac: int = _player.armor_class()
 
-	var t := "\n\n\n\n[center][font_size=30][b]Create Your Character[/b][/font_size]\n\n"
-	t += "Human Fighter,  Lawful\n\n"
-	t += "St %2d (%+d)    Dx %2d (%+d)    Co %2d (%+d)\n" % [
-		st, GameData.ability_mod(st), dx, GameData.ability_mod(dx),
-		co, GameData.ability_mod(co)]
-	t += "In %2d (%+d)    Wi %2d (%+d)    Ch %2d (%+d)\n\n" % [
-		intel, GameData.ability_mod(intel), wi, GameData.ability_mod(wi),
-		cha, GameData.ability_mod(cha)]
-	t += "HP %d        AC %d\n\n\n" % [hp, ac]
-	t += "[ R ] Reroll          [ Enter ] Begin[/center]"
+	var t := "\n\n\n\n[center][font_size=30][b][color=#e0b25a]Create Your Character[/color][/b][/font_size]\n\n"
+	t += "[color=#b8b0a0]Human Fighter,  [/color][color=#cfc6dc]Lawful[/color]\n\n"
+	t += "%s    %s    %s\n" % [
+		_stat_cell("St", st), _stat_cell("Dx", dx), _stat_cell("Co", co)]
+	t += "%s    %s    %s\n\n" % [
+		_stat_cell("In", intel), _stat_cell("Wi", wi), _stat_cell("Ch", cha)]
+	t += "[color=#d06a5a]HP %d[/color]        [color=#6a9fd0]AC %d[/color]\n\n\n" % [hp, ac]
+	t += "[color=#e0b25a][ R ][/color] Reroll          [color=#e0b25a][ Enter ][/color] Begin[/center]"
 	_create_label.text = t
+
+
+# Format one ability score as "Lbl NN (+/-M)" with the value tinted by its modifier.
+func _stat_cell(label: String, value: int) -> String:
+	var m: int = GameData.ability_mod(value)
+	var col := "#888888"
+	if m > 0:
+		col = "#7ec850"
+	elif m < 0:
+		col = "#d06a5a"
+	return "[color=#9a9286]%s[/color] [color=%s]%2d (%+d)[/color]" % [label, col, value, m]
 
 
 func _open_inventory() -> void:
@@ -873,6 +938,11 @@ func _do_move_action(dir: Vector2i) -> void:
 
 func _do_kick_action(dir: Vector2i) -> void:
 	var target: Vector2i = _player.grid_pos + dir
+
+	if _monster_at.has(target):
+		_kick_monster(_monster_at[target])
+		return
+
 	var tile: int = _dungeon.get_tile(target.x, target.y)
 
 	if tile == GameData.Tile.DOOR_LOCKED or tile == GameData.Tile.DOOR_CLOSED:
@@ -887,6 +957,53 @@ func _do_kick_action(dir: Vector2i) -> void:
 		_add_message("You kick at the open doorway.")
 	else:
 		_add_message("You kick at empty space.")
+
+
+func _kick_monster(m: Monster) -> void:
+	var data: Dictionary = GameData.MONSTERS[m.kind]
+	var mname: String = data["name"]
+	var target_ac: int = data["ac"]
+
+	# BF brawling rule: soft-armored kicker vs metal-armored target -> kick rebounds.
+	var player_soft_armor: bool = _player.equipped_armor < 0 or \
+		_player.equipped_armor == GameData.ItemKind.LEATHER_ARMOR
+	if player_soft_armor and data.get("metal_armor", false):
+		var dmg := GameData.roll(1, 4)
+		_add_message("You hurt your foot kicking the armored %s!  (%d damage to you)" % [mname, dmg])
+		_player.hp -= dmg
+		_update_status()
+		if not _player.is_alive():
+			_player_dies()
+		return
+
+	var base_atk: int = _player.melee_attack_bonus()
+	var fatigue: int = FATIGUE_PENALTY if _player.fatigued else 0
+	var d20 := randi_range(1, 20)
+	var total := d20 + base_atk - KICK_ATK_PENALTY - fatigue
+
+	var calc := "d20 %d %s -2" % [d20, _signed(base_atk)]
+	if fatigue > 0:
+		calc += " %s" % _signed(-fatigue)
+	calc += " = %d vs AC %d" % [total, target_ac]
+
+	var hit := total >= target_ac
+	if not hit:
+		_add_message("You miss the %s." % mname)
+		_push_combat_event(_combat_attack_block(
+			"You kick at %s" % _cap(mname), false, true, _nat_note(d20), calc, "", ""))
+		return
+
+	var dmg: int = GameData.roll(1, 4)
+	var dline := "kick 1d4 = %d" % dmg
+	m.hp -= dmg
+	_add_message("You kick the %s for %d damage." % [mname, dmg])
+	var hp_short := "slain" if m.hp <= 0 else "%d/%d" % [m.hp, m.max_hp]
+	_push_combat_event(_combat_attack_block(
+		"You kick %s" % _cap(mname), true, true, _nat_note(d20), calc, dline, hp_short))
+	if m.hp <= 0:
+		_kill_monster(m, mname, int(data["xp"]))
+	else:
+		_check_half_hp_morale(m)
 
 
 func _attack_monster(m: Monster) -> void:
@@ -1235,7 +1352,6 @@ func _set_combat_zoom(active: bool) -> void:
 	if _combat_zoom_active == active:
 		return
 	_combat_zoom_active = active
-	_player.set_combat_highlight(active)
 	if active:
 		# Show the card; if no blow has landed yet this engagement, prime it.
 		_render_combat_panel()
@@ -1260,7 +1376,6 @@ func _reset_combat_zoom() -> void:
 	if _camera_zoom_tween:
 		_camera_zoom_tween.kill()
 	_combat_zoom_active = false
-	_player.set_combat_highlight(false)
 	_camera.zoom = CAMERA_ZOOM_NORMAL
 	if _combat_bg:
 		_combat_bg.visible = false

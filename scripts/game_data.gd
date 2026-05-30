@@ -28,9 +28,8 @@ const COLOR_DOOR := Color(0.52, 0.37, 0.18)  # muted wood, not neon yellow
 const COLOR_STAIRS := Color.WHITE
 const COLOR_PILLAR := Color(0.26, 0.26, 0.31)  # cool stone column, distinct from warm walls
 
-# Visual-polish tokens/highlights drawn behind glyphs (player, monsters, combat).
+# Dark token drawn behind glyphs (player, monsters).
 const COLOR_TOKEN_BG := Color(0.06, 0.06, 0.08)
-const COLOR_COMBAT_HIGHLIGHT := Color(0.95, 0.55, 0.20)
 
 # Per-room atmosphere tint. Kept subtle by lerping the base colour 10% toward
 # the mood colour -- rooms should feel mildly different, not look colour-coded.
