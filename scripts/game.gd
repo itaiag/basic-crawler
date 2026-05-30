@@ -6,17 +6,6 @@ const RIGHT_PANEL_W := 340
 const ENGAGE_RANGE := 5
 const MORALE_SIGHT_RANGE := 6
 
-# Combat roll panel: a small dark-fantasy card docked near the fight, shown only
-# while engaged. It is a *structured* encounter panel, not a chronological log:
-# a fixed initiative header that never scrolls, then the current round's events.
-# Detailed roll breakdowns go here; the top log stays narrative.
-const COMBAT_PANEL_W := 340
-const COMBAT_PANEL_H := 308
-const COMBAT_PANEL_MARGIN := 12
-# If a round has more events than fit, keep the most recent few (in order) so the
-# initiative header is never pushed off the top.
-const COMBAT_TURN_EVENT_LIMIT := 4
-
 # Subtle battle zoom. In Godot 4 a larger Camera2D.zoom means more zoomed-in,
 # so combat nudges the view slightly closer. Keep it gentle ("felt, not noticed").
 const CAMERA_ZOOM_NORMAL := Vector2(1.0, 1.0)
@@ -66,12 +55,7 @@ var _create_bg: ColorRect
 var _create_label: RichTextLabel
 var _inv_bg: ColorRect
 var _inv_label: RichTextLabel
-var _combat_bg: ColorRect
-var _combat_label: RichTextLabel
-var _combat_turn := 0                   # current round within the active encounter
-var _turn_events: Array[String] = []    # this round's event blocks, in order acted
-var _combat_corner := -1  # 0=TL 1=TR 2=BL 3=BR; -1 = unplaced (snap on next show)
-var _combat_pos_tween: Tween
+var _combat_panel: Node  # combat_panel.gd, built at runtime under UI
 
 @onready var _renderer: Node2D = $DungeonRenderer
 @onready var _player: Node2D = $Player
@@ -285,45 +269,14 @@ func _setup_side_panel() -> void:
 	_inv_bg.add_child(_inv_label)
 
 
-# A small combat card, bottom-right, above the status bar. Hidden out of combat;
-# styled with a warm border so it reads as distinct from the cool top log.
+# The combat card is its own node (combat_panel.gd) under the UI layer; game.gd
+# feeds it the fight's screen-space area via the _combat_area_screen closure.
 func _setup_combat_panel() -> void:
 	var font := preload("res://resources/mono_font.tres")
 	var vp := get_viewport().get_visible_rect().size
-
-	_combat_bg = ColorRect.new()
-	# Slightly translucent so the player can tell map content sits behind it when
-	# overlap is unavoidable; the text itself stays fully opaque and readable.
-	_combat_bg.color = Color(0.10, 0.06, 0.06, 0.88)
-	_combat_bg.position = Vector2(
-		vp.x - COMBAT_PANEL_W - COMBAT_PANEL_MARGIN,
-		vp.y - BOTTOM_PANEL_H - COMBAT_PANEL_H - COMBAT_PANEL_MARGIN)
-	_combat_bg.size = Vector2(COMBAT_PANEL_W, COMBAT_PANEL_H)
-	_combat_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_combat_bg.visible = false
-	$UI.add_child(_combat_bg)
-
-	_combat_label = RichTextLabel.new()
-	_combat_label.bbcode_enabled = true
-	_combat_label.scroll_active = false
-	_combat_label.position = Vector2.ZERO
-	_combat_label.size = Vector2(COMBAT_PANEL_W, COMBAT_PANEL_H)
-	_combat_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.10, 0.06, 0.06, 0.88)
-	style.border_color = Color(0.46, 0.22, 0.22)
-	style.set_border_width_all(1)
-	style.set_corner_radius_all(3)
-	style.content_margin_left = 14
-	style.content_margin_top = 12
-	style.content_margin_right = 12
-	style.content_margin_bottom = 10
-	_combat_label.add_theme_stylebox_override("normal", style)
-	_combat_label.add_theme_font_override("normal_font", font)
-	_combat_label.add_theme_font_override("bold_font", font)
-	_combat_label.add_theme_font_size_override("normal_font_size", 14)
-	_combat_label.add_theme_color_override("default_color", Color(0.85, 0.85, 0.85))
-	_combat_bg.add_child(_combat_label)
+	_combat_panel = load("res://scripts/combat_panel.gd").new()
+	add_child(_combat_panel)
+	_combat_panel.setup($UI, font, vp, TOP_PANEL_H, BOTTOM_PANEL_H, _combat_area_screen)
 
 
 func _new_overlay() -> ColorRect:
@@ -611,24 +564,8 @@ func _in_closed_room() -> bool:
 	return true
 
 
-func _random_spawn_cell_near(center: Vector2i, min_r: int, max_r: int) -> Vector2i:
-	for _t in range(30):
-		var dx := randi_range(-max_r, max_r)
-		var dy := randi_range(-max_r, max_r)
-		var dist := absi(dx) + absi(dy)
-		if dist < min_r or dist > max_r:
-			continue
-		var cell := center + Vector2i(dx, dy)
-		if cell == _player.grid_pos or _monster_at.has(cell):
-			continue
-		if not GameData.is_passable(_dungeon.get_tile(cell.x, cell.y)):
-			continue
-		return cell
-	return Vector2i(-1, -1)
-
-
 func _spawn_wandering_near_player() -> String:
-	var cell := _random_spawn_cell_near(_player.grid_pos, 2, 5)
+	var cell := DungeonPopulator.wandering_cell_near(_player.grid_pos, 2, 5, _dungeon, _monster_at, _player.grid_pos)
 	if cell.x < 0:
 		return ""
 	var kind := randi() % GameData.MONSTERS.size()
@@ -981,16 +918,16 @@ func _kick_monster(m: Monster) -> void:
 	var d20 := randi_range(1, 20)
 	var total := d20 + base_atk - KICK_ATK_PENALTY - fatigue
 
-	var calc := "d20 %d %s -2" % [d20, _signed(base_atk)]
+	var calc := "d20 %d %s -2" % [d20, TextFmt.signed(base_atk)]
 	if fatigue > 0:
-		calc += " %s" % _signed(-fatigue)
+		calc += " %s" % TextFmt.signed(-fatigue)
 	calc += " = %d vs AC %d" % [total, target_ac]
 
 	var hit := total >= target_ac
 	if not hit:
 		_add_message("You miss the %s." % mname)
-		_push_combat_event(_combat_attack_block(
-			"You kick at %s" % _cap(mname), false, true, _nat_note(d20), calc, "", ""))
+		_combat_panel.push_attack(
+			"You kick at %s" % TextFmt.cap(mname), false, true, d20, calc, "", "")
 		return
 
 	var dmg: int = GameData.roll(1, 4)
@@ -998,8 +935,8 @@ func _kick_monster(m: Monster) -> void:
 	m.hp -= dmg
 	_add_message("You kick the %s for %d damage." % [mname, dmg])
 	var hp_short := "slain" if m.hp <= 0 else "%d/%d" % [m.hp, m.max_hp]
-	_push_combat_event(_combat_attack_block(
-		"You kick %s" % _cap(mname), true, true, _nat_note(d20), calc, dline, hp_short))
+	_combat_panel.push_attack(
+		"You kick %s" % TextFmt.cap(mname), true, true, d20, calc, dline, hp_short)
 	if m.hp <= 0:
 		_kill_monster(m, mname, int(data["xp"]))
 	else:
@@ -1015,15 +952,15 @@ func _attack_monster(m: Monster) -> void:
 	var d20 := randi_range(1, 20)
 	var total := d20 + atk - fatigue
 
-	var calc := "d20 %d %s" % [d20, _signed(atk)]
+	var calc := "d20 %d %s" % [d20, TextFmt.signed(atk)]
 	if fatigue > 0:
-		calc += " %s" % _signed(-fatigue)  # show the fatigue penalty as its own term
+		calc += " %s" % TextFmt.signed(-fatigue)  # show the fatigue penalty as its own term
 	calc += " = %d vs AC %d" % [total, target_ac]
 	var hit := total >= target_ac
 	if not hit:
 		_add_message("You miss the %s." % mname)
-		_push_combat_event(_combat_attack_block(
-			"You swing at %s" % _cap(mname), false, true, _nat_note(d20), calc, "", ""))
+		_combat_panel.push_attack(
+			"You swing at %s" % TextFmt.cap(mname), false, true, d20, calc, "", "")
 		return
 
 	var dn := int(_player.weapon_dmg_n())
@@ -1032,15 +969,15 @@ func _attack_monster(m: Monster) -> void:
 	var dbonus := int(_player.damage_bonus())
 	var raw := base_dmg + dbonus
 	var dmg := maxi(1, raw)
-	var dline := "%s %dd%d %d %s = %d" % [_player_weapon_name(), dn, dd, base_dmg, _signed(dbonus), raw]
+	var dline := "%s %dd%d %d %s = %d" % [_player_weapon_name(), dn, dd, base_dmg, TextFmt.signed(dbonus), raw]
 	if dmg != raw:
 		dline += " (min 1)"
 
 	m.hp -= dmg
 	_add_message("You hit the %s for %d damage." % [mname, dmg])
 	var hp_short := "slain" if m.hp <= 0 else "%d/%d" % [m.hp, m.max_hp]
-	_push_combat_event(_combat_attack_block(
-		"You strike %s" % _cap(mname), true, true, _nat_note(d20), calc, dline, hp_short))
+	_combat_panel.push_attack(
+		"You strike %s" % TextFmt.cap(mname), true, true, d20, calc, dline, hp_short)
 	if m.hp <= 0:
 		_kill_monster(m, mname, int(data["xp"]))
 	else:
@@ -1052,7 +989,7 @@ func _kill_monster(m: Monster, mname: String, xp_value: int) -> void:
 	_monster_at.erase(m.grid_pos)
 	_monsters.erase(m)
 	m.queue_free()
-	_add_message("%s dies!  (+%d XP)" % [_cap(mname), xp_value])
+	_add_message("%s dies!  (+%d XP)" % [TextFmt.cap(mname), xp_value])
 	_gain_xp(xp_value)
 	_check_ally_death_morale(dead_pos)
 
@@ -1087,8 +1024,8 @@ func _morale_check(m: Monster) -> void:
 	var held := roll <= morale
 	var verdict := "[color=#9bd06b]HOLDS[/color]" if held else "[color=#d09040]FLEES[/color]"
 	_add_message("%s morale: 2d6 %d vs %d -> %s" %
-		[_cap(nm), roll, morale, verdict])
-	_push_combat_event(_combat_morale_block(_cap(nm), held, roll, morale))
+		[TextFmt.cap(nm), roll, morale, verdict])
+	_combat_panel.push_morale(TextFmt.cap(nm), held, roll, morale)
 	if not held:
 		m.fleeing = true
 
@@ -1159,25 +1096,10 @@ func _toggle_reveal() -> void:
 
 func _spawn_monsters() -> void:
 	_clear_monsters()
-	for ri in range(1, _dungeon.rooms.size()):
-		var room: Rect2i = _dungeon.rooms[ri]
-		var n := randi_range(0, 2)
-		for _k in range(n):
-			var cell := _random_floor_cell(room)
-			if cell.x < 0:
-				continue
-			var kind := randi() % GameData.MONSTERS.size()
-			_add_monster(kind, cell)
-
-
-func _random_floor_cell(room: Rect2i) -> Vector2i:
-	for _t in range(10):
-		var x := randi_range(room.position.x, room.end.x - 1)
-		var y := randi_range(room.position.y, room.end.y - 1)
-		var cell := Vector2i(x, y)
-		if _dungeon.get_tile(x, y) == GameData.Tile.FLOOR and not _monster_at.has(cell):
-			return cell
-	return Vector2i(-1, -1)
+	for spawn in DungeonPopulator.roll_monsters(_dungeon, _monster_at):
+		var kind: int = spawn["kind"]
+		var cell: Vector2i = spawn["cell"]
+		_add_monster(kind, cell)
 
 
 func _add_monster(kind: int, cell: Vector2i) -> void:
@@ -1196,63 +1118,11 @@ func _clear_monsters() -> void:
 
 
 func _spawn_items() -> void:
+	# The renderer holds _items_at by reference (set once in _ready), so refill the
+	# existing dict in place rather than rebinding it.
 	_items_at.clear()
-	for ri in range(_dungeon.rooms.size()):
-		var room: Rect2i = _dungeon.rooms[ri]
-		if randf() < 0.5:
-			_place_item(room, _gold_item())
-		if randf() < 0.35:
-			_place_item(room, _potion_item())
-		if randf() < 0.20:
-			_place_item(room, _loot_item(_random_weapon_kind()))
-		if randf() < 0.15:
-			_place_item(room, _loot_item(_random_armor_kind()))
+	_items_at.merge(DungeonPopulator.roll_items(_dungeon, _monster_at), true)
 	_renderer.queue_redraw()
-
-
-func _place_item(room: Rect2i, item: Dictionary) -> void:
-	for _t in range(10):
-		var x := randi_range(room.position.x, room.end.x - 1)
-		var y := randi_range(room.position.y, room.end.y - 1)
-		var cell := Vector2i(x, y)
-		if _dungeon.get_tile(x, y) != GameData.Tile.FLOOR:
-			continue
-		if _items_at.has(cell) or _monster_at.has(cell):
-			continue
-		_items_at[cell] = item
-		return
-
-
-func _gold_item() -> Dictionary:
-	return {"glyph": "$", "color": GameData.COLOR_GOLD, "gold": randi_range(2, 30)}
-
-
-func _potion_item() -> Dictionary:
-	var data: Dictionary = GameData.ITEMS[GameData.ItemKind.HEALING_POTION]
-	return {"glyph": "!", "color": data["color"], "item": GameData.ItemKind.HEALING_POTION}
-
-
-func _loot_item(kind: int) -> Dictionary:
-	var data: Dictionary = GameData.ITEMS[kind]
-	return {"glyph": data["glyph"], "color": data["color"], "item": kind}
-
-
-func _random_weapon_kind() -> int:
-	var kinds: Array[int] = []
-	for kind in range(GameData.ITEMS.size()):
-		if GameData.is_weapon(kind):
-			kinds.append(kind)
-	var pick: int = kinds[randi() % kinds.size()]
-	return pick
-
-
-func _random_armor_kind() -> int:
-	var kinds: Array[int] = []
-	for kind in range(GameData.ITEMS.size()):
-		if GameData.is_armor(kind) or GameData.is_shield(kind):
-			kinds.append(kind)
-	var pick: int = kinds[randi() % kinds.size()]
-	return pick
 
 
 func _pickup_item(cell: Vector2i) -> void:
@@ -1313,8 +1183,7 @@ func _begin_encounter() -> void:
 	# Initiative lives in the panel's fixed header (built from the stored rolls),
 	# not as a scrolling event. The top log keeps one compact narrative line.
 	_add_message("Encounter begins.  %s" % who)
-	_combat_turn = 0
-	_turn_events.clear()
+	_combat_panel.begin_encounter(_player_initiative_roll, _monster_initiative_roll, _player_has_initiative)
 
 
 # End of encounter: reset state so the next engagement rolls fresh initiative.
@@ -1323,8 +1192,7 @@ func _end_encounter() -> void:
 	_player_has_initiative = true
 	_player_initiative_roll = 0
 	_monster_initiative_roll = 0
-	_combat_turn = 0
-	_turn_events.clear()
+	_combat_panel.end_encounter()
 
 
 func _engaged() -> bool:
@@ -1354,15 +1222,10 @@ func _set_combat_zoom(active: bool) -> void:
 	_combat_zoom_active = active
 	if active:
 		# Show the card; if no blow has landed yet this engagement, prime it.
-		_render_combat_panel()
+		_combat_panel.show_card()
 	else:
 		# Leaving combat: clear the panel so the next fight starts fresh.
-		_combat_bg.visible = false
-		_turn_events.clear()
-		_combat_label.text = ""
-		_combat_corner = -1  # next engagement snaps to its chosen corner
-		if _combat_pos_tween:
-			_combat_pos_tween.kill()
+		_combat_panel.hide_card()
 	if _camera_zoom_tween:
 		_camera_zoom_tween.kill()
 	var target_zoom := CAMERA_ZOOM_COMBAT if active else CAMERA_ZOOM_NORMAL
@@ -1377,109 +1240,14 @@ func _reset_combat_zoom() -> void:
 		_camera_zoom_tween.kill()
 	_combat_zoom_active = false
 	_camera.zoom = CAMERA_ZOOM_NORMAL
-	if _combat_bg:
-		_combat_bg.visible = false
-		_turn_events.clear()
-		_combat_label.text = ""
-		_combat_corner = -1
-		if _combat_pos_tween:
-			_combat_pos_tween.kill()
+	_combat_panel.hide_card()
 
 
 # --- Combat panel (structured encounter card) -----------------------------
-# The panel is split into a fixed top header (encounter + initiative, built from
-# stored state so it never scrolls) and a Current-Turn section that is replaced
-# each round. Combat events are appended to the current turn in the order acted.
+# The card itself lives in combat_panel.gd; game.gd just drives it.
 
 func _begin_combat_turn() -> void:
-	_combat_turn += 1
-	_turn_events.clear()
-	_render_combat_panel()
-
-
-func _push_combat_event(block: String) -> void:
-	_turn_events.append(block)
-	_render_combat_panel()
-
-
-func _render_combat_panel() -> void:
-	if _encounter_active:
-		_combat_label.text = "%s\n\n%s" % [_combat_header(), _combat_turn_section()]
-	else:
-		# Engaged but no encounter rolled yet (the rare mid-move trigger gap).
-		_combat_label.text = "[font_size=16][b]In combat[/b][/font_size]\n\n[color=#8a8a8a]Steel is drawn...[/color]"
-	_combat_bg.visible = true
-	_update_combat_panel_placement()
-
-
-# A thin graphical rule under a section heading (box-drawing line).
-func _combat_rule() -> String:
-	return "[color=#6a4f4f]%s[/color]" % "─".repeat(22)
-
-
-# Fixed header: the encounter's initiative result. Pinned at the top of the
-# panel and rebuilt from stored rolls, so attack events never push it down.
-func _combat_header() -> String:
-	var win_col := "#9bbf6b" if _player_has_initiative else "#d09a6a"
-	var who := "You win initiative." if _player_has_initiative else "Monsters win initiative."
-	var t := "[font_size=16][b]Encounter[/b][/font_size]\n"
-	t += _combat_rule() + "\n"
-	t += "[color=%s]%s[/color]\n" % [win_col, who]
-	t += "[color=#9a9a9a]You: %d   Monsters: %d[/color]" % [
-		_player_initiative_roll, _monster_initiative_roll]
-	return t
-
-
-# Current round only. Older rounds are not kept here (the top log holds the
-# narrative history). If the round overflows, the most recent events are shown.
-func _combat_turn_section() -> String:
-	var t := "[font_size=16][b]Turn %d[/b][/font_size]\n" % _combat_turn
-	t += _combat_rule()
-	if _turn_events.is_empty():
-		t += "\n[color=#7a7a7a]...[/color]"
-		return t
-	var start := maxi(0, _turn_events.size() - COMBAT_TURN_EVENT_LIMIT)
-	for i in range(start, _turn_events.size()):
-		t += "\n\n" + _turn_events[i]
-	return t
-
-
-# Pick the panel corner farthest from the current fight and move it there. Only
-# repositions when the chosen corner actually changes, so it never jitters; the
-# first placement of an engagement snaps, later changes glide on a short tween.
-func _update_combat_panel_placement() -> void:
-	if not _combat_bg.visible:
-		return
-	var corner := _desired_combat_corner()
-	if corner == _combat_corner:
-		return
-	var first := _combat_corner == -1
-	_combat_corner = corner
-	var vp := get_viewport().get_visible_rect().size
-	var target := _combat_corner_pos(corner, vp)
-	if _combat_pos_tween:
-		_combat_pos_tween.kill()
-	if first:
-		_combat_bg.position = target
-	else:
-		_combat_pos_tween = create_tween()
-		_combat_pos_tween.set_trans(Tween.TRANS_SINE)
-		_combat_pos_tween.set_ease(Tween.EASE_OUT)
-		_combat_pos_tween.tween_property(_combat_bg, "position", target, 0.18)
-
-
-# Screen-space top-left for a candidate corner. All four sit strictly between
-# the top message log and the bottom status bar so the panel never covers them.
-func _combat_corner_pos(corner: int, vp: Vector2) -> Vector2:
-	var top := float(TOP_PANEL_H + COMBAT_PANEL_MARGIN)
-	var bottom := vp.y - BOTTOM_PANEL_H - COMBAT_PANEL_H - COMBAT_PANEL_MARGIN
-	var left := float(COMBAT_PANEL_MARGIN)
-	var right := vp.x - COMBAT_PANEL_W - COMBAT_PANEL_MARGIN
-	match corner:
-		0: return Vector2(left, top)      # top-left
-		1: return Vector2(right, top)     # top-right
-		2: return Vector2(left, bottom)   # bottom-left
-		_: return Vector2(right, bottom)  # bottom-right
+	_combat_panel.begin_turn()
 
 
 # Screen-space bounding box of the active fight: the player plus any engaged,
@@ -1497,69 +1265,6 @@ func _combat_area_screen() -> Rect2:
 	return area.grow(float(GameData.CELL.x))
 
 
-func _desired_combat_corner() -> int:
-	return _pick_corner(_combat_area_screen(), get_viewport().get_visible_rect().size)
-
-
-# Score each candidate: a non-overlapping corner always beats an overlapping
-# one; ties (and the all-overlap case) break toward the greatest distance from
-# the combat-area center. Pure given (area, vp) so it can be unit-checked.
-func _pick_corner(area: Rect2, vp: Vector2) -> int:
-	var center := area.position + area.size * 0.5
-	var panel_size := Vector2(COMBAT_PANEL_W, COMBAT_PANEL_H)
-	var best := 3
-	var best_score := -1.0
-	for corner in range(4):
-		var pos := _combat_corner_pos(corner, vp)
-		var rect := Rect2(pos, panel_size)
-		var dist := (pos + panel_size * 0.5).distance_to(center)
-		var score := dist + (0.0 if rect.intersects(area) else 100000.0)
-		if score > best_score:
-			best_score = score
-			best = corner
-	return best
-
-
-# One attack entry: a bold "who → who" header with a HIT/MISS badge (and the
-# target's remaining HP / NAT note), then labelled Attack and Damage lines.
-# `friendly` tints the player's hits green / an enemy's hits red; misses go grey.
-func _combat_attack_block(header: String, hit: bool, friendly: bool, nat: String, attack_line: String, damage_line: String, hp_short: String) -> String:
-	var result := "HIT" if hit else "MISS"
-	var col := "#707070"
-	if hit:
-		col = "#74c274" if friendly else "#d97a7a"
-	# Pad the name so the HIT/MISS badge lines up, with a guaranteed gap so they
-	# never run together when the name fills the column (e.g. "...you" + "MISS").
-	var t := "[b]%s[/b]  [color=%s][b]%s[/b][/color]" % [header.rpad(18), col, result]
-	if hp_short != "":
-		t += "  [color=#b0b0b0](%s)[/color]" % hp_short
-	if nat != "":
-		t += "  %s" % nat
-	t += "\n[color=#8f8f8f]Attack:[/color] %s" % attack_line
-	if hit and damage_line != "":
-		t += "\n[color=#caa05a]Damage:[/color] %s" % damage_line
-	return t
-
-
-# Morale card for the panel: a 2d6 nerve test surfaced like an attack so the
-# player sees *why* a monster turned and ran (it otherwise only hit the log).
-func _combat_morale_block(name: String, held: bool, roll: int, morale: int) -> String:
-	var result := "HOLDS" if held else "FLEES"
-	var col := "#9bd06b" if held else "#d09040"
-	var t := "[b]%s[/b]  [color=%s][b]%s[/b][/color]" % [("%s morale" % name).rpad(18), col, result]
-	t += "\n[color=#8f8f8f]Check:[/color] 2d6 %d vs %d" % [roll, morale]
-	return t
-
-
-# A natural 20 / natural 1 is surfaced for flavour only -- no crit mechanics yet.
-func _nat_note(d20: int) -> String:
-	if d20 == 20:
-		return "[color=#e8d27a][b]NAT 20![/b][/color]"
-	if d20 == 1:
-		return "[color=#c06a6a][b]NAT 1[/b][/color]"
-	return ""
-
-
 func _monsters_act() -> void:
 	for m in _monsters:
 		if not _player_alive:
@@ -1575,7 +1280,7 @@ func _monster_take_turn(m: Monster) -> void:
 	var dist := absi(to_player.x) + absi(to_player.y)
 
 	if m.fleeing:
-		var flee := _choose_flee_step(m, to_player)
+		var flee := MonsterAI.flee_step(m.grid_pos, to_player, _dungeon, _monster_at, _player.grid_pos)
 		if flee != Vector2i.ZERO:
 			_move_monster(m, flee)
 		elif dist <= 1:
@@ -1586,7 +1291,7 @@ func _monster_take_turn(m: Monster) -> void:
 	if dist <= 1:
 		_monster_attack(m)
 		return
-	var step := _choose_monster_step(m, to_player)
+	var step := MonsterAI.chase_step(m.grid_pos, to_player, _dungeon, _monster_at, _player.grid_pos)
 	if step != Vector2i.ZERO:
 		_move_monster(m, step)
 
@@ -1598,52 +1303,6 @@ func _move_monster(m: Monster, step: Vector2i) -> void:
 	_monster_at[m.grid_pos] = m
 
 
-func _choose_monster_step(m: Monster, to_player: Vector2i) -> Vector2i:
-	# Greedy chase: try the longer axis first, then the other.
-	var options: Array[Vector2i] = []
-	if absi(to_player.x) >= absi(to_player.y):
-		if to_player.x != 0:
-			options.append(Vector2i(signi(to_player.x), 0))
-		if to_player.y != 0:
-			options.append(Vector2i(0, signi(to_player.y)))
-	else:
-		if to_player.y != 0:
-			options.append(Vector2i(0, signi(to_player.y)))
-		if to_player.x != 0:
-			options.append(Vector2i(signi(to_player.x), 0))
-	for step in options:
-		if _monster_can_enter(m.grid_pos + step):
-			return step
-	return Vector2i.ZERO
-
-
-func _choose_flee_step(m: Monster, to_player: Vector2i) -> Vector2i:
-	# Mirror of the chase: step directly away from the player when possible.
-	var options: Array[Vector2i] = []
-	if absi(to_player.x) >= absi(to_player.y):
-		if to_player.x != 0:
-			options.append(Vector2i(-signi(to_player.x), 0))
-		if to_player.y != 0:
-			options.append(Vector2i(0, -signi(to_player.y)))
-	else:
-		if to_player.y != 0:
-			options.append(Vector2i(0, -signi(to_player.y)))
-		if to_player.x != 0:
-			options.append(Vector2i(-signi(to_player.x), 0))
-	for step in options:
-		if _monster_can_enter(m.grid_pos + step):
-			return step
-	return Vector2i.ZERO
-
-
-func _monster_can_enter(cell: Vector2i) -> bool:
-	if cell == _player.grid_pos:
-		return false
-	if _monster_at.has(cell):
-		return false
-	return GameData.is_passable(_dungeon.get_tile(cell.x, cell.y))
-
-
 func _monster_attack(m: Monster) -> void:
 	var data: Dictionary = GameData.MONSTERS[m.kind]
 	var mname: String = data["name"]
@@ -1652,11 +1311,11 @@ func _monster_attack(m: Monster) -> void:
 	var d20 := randi_range(1, 20)
 	var total := d20 + atk
 	var hit := total >= pac
-	var calc := "d20 %d %s = %d vs AC %d" % [d20, _signed(atk), total, pac]
+	var calc := "d20 %d %s = %d vs AC %d" % [d20, TextFmt.signed(atk), total, pac]
 	if not hit:
 		_add_message("The %s misses you." % mname)
-		_push_combat_event(_combat_attack_block(
-			"%s swings at you" % _cap(mname), false, false, _nat_note(d20), calc, "", ""))
+		_combat_panel.push_attack(
+			"%s swings at you" % TextFmt.cap(mname), false, false, d20, calc, "", "")
 		return
 
 	var dn := int(data["dmg_n"])
@@ -1666,8 +1325,8 @@ func _monster_attack(m: Monster) -> void:
 	_add_message("The %s hits you for %d damage." % [mname, dmg])
 	var dline := "%dd%d %d" % [dn, dd, dmg]
 	var hp_short := "%d/%d" % [maxi(0, _player.hp), _player.max_hp]
-	_push_combat_event(_combat_attack_block(
-		"%s strikes you" % _cap(mname), true, false, _nat_note(d20), calc, dline, hp_short))
+	_combat_panel.push_attack(
+		"%s strikes you" % TextFmt.cap(mname), true, false, d20, calc, dline, hp_short)
 	if not _player.is_alive():
 		_player_dies()
 
@@ -1681,19 +1340,6 @@ func _player_dies() -> void:
 
 func _add_message(text: String) -> void:
 	_msg_log.append_text(text + "\n")
-
-
-func _cap(s: String) -> String:
-	if s.is_empty():
-		return s
-	return s.substr(0, 1).to_upper() + s.substr(1)
-
-
-# Signed term with a space, e.g. "+ 2" / "- 1", for readable roll breakdowns.
-func _signed(n: int) -> String:
-	if n >= 0:
-		return "+ %d" % n
-	return "- %d" % (-n)
 
 
 func _player_weapon_name() -> String:
