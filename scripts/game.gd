@@ -57,6 +57,7 @@ var _fire_options: Array[int] = []
 var _fire_ammo_kind := -1
 var _create_bg: ColorRect
 var _create_label: RichTextLabel
+var _help: Node  # help_panel.gd, built at runtime under UI
 var _inv_bg: ColorRect
 var _inv_label: RichTextLabel
 var _combat_panel: Node  # combat_panel.gd, built at runtime under UI
@@ -181,6 +182,12 @@ func _setup_overlays() -> void:
 	_create_bg = _new_overlay()
 	_create_label = _create_bg.get_child(0) as RichTextLabel
 	_setup_create_decor()
+
+	var font := preload("res://resources/mono_font.tres")
+	var vp := get_viewport().get_visible_rect().size
+	_help = load("res://scripts/help_panel.gd").new()
+	add_child(_help)
+	_help.setup($UI, font, vp)
 
 
 # Frames the character-creation text: a soft warm torch-glow and a bordered
@@ -322,6 +329,7 @@ func _begin_play() -> void:
 	_create_bg.visible = false
 	_add_message("Welcome to the dungeon, Adventurer the Human Fighter!")
 	_add_message("Commands: arrows move, k kick, c close door, i inventory, q quaff, w wield, W wear, R rest.")
+	_add_message("Press ? or F1 anytime for the full command list.")
 	_add_message("[Debug] F5: new dungeon   F6: reveal map")
 	_update_status()
 	_update_combat_camera_zoom()
@@ -617,6 +625,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	if _help.is_open():
+		_help.close()
+		get_viewport().set_input_as_handled()
+		return
+
 	if not _player_alive:
 		return
 
@@ -680,6 +693,12 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if event.keycode == KEY_I:
 		_open_inventory()
+		get_viewport().set_input_as_handled()
+		return
+
+	if event.keycode == KEY_F1 or event.keycode == KEY_QUESTION \
+			or (event.keycode == KEY_SLASH and event.shift_pressed):
+		_help.open()
 		get_viewport().set_input_as_handled()
 		return
 
