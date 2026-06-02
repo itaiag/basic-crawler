@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 "Basic Crawler" — a NetHack/Rogue-inspired roguelike dungeon crawler built in **Godot 4.6.3** (GDScript). Randomly generated dungeons, turn-based OSR/Basic-Fantasy combat, permadeath. The full design brief is in `Basic Crawler Game Plan.md`. Targets desktop, mobile, and web via the **GL Compatibility** renderer — do not switch renderers, and don't add features that break web/mobile export.
 
+## Environment
+
+This is a **Windows** development machine. Use **PowerShell** syntax for shell commands unless told otherwise (`$null` not `/dev/null`, `$env:VAR` not `$VAR`, backtick for line continuation; cmdlets like `Get-Content`/`Select-String` over `cat`/`grep`). Paths are Windows-style (`C:\Users\itaia\...`). The validation commands below are written for PowerShell.
+
 ## Workflow expectation (important)
 
 Work is delivered in **small, reviewable stages, and within a stage in incremental steps**; the owner checks each step (usually by running the editor and sending a screenshot) before the next. Do not jump ahead. When a stage is broad, confirm scope/order with the owner first (use the question tool), then implement one reviewable step at a time. The owner reviews visual changes by screenshot — many visual claims cannot be self-verified headless; say so rather than asserting success.
