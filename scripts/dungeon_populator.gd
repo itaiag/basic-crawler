@@ -39,6 +39,10 @@ static func roll_items(dungeon, occupancy: Dictionary) -> Dictionary:
 			_place_item(dungeon, room, loot_item(random_weapon_kind()), items, occupancy)
 		if randf() < 0.15:
 			_place_item(dungeon, room, loot_item(random_armor_kind()), items, occupancy)
+		if randf() < 0.12:
+			_place_item(dungeon, room, loot_item(random_ranged_kind()), items, occupancy)
+		if randf() < 0.18:
+			_place_item(dungeon, room, ammo_item(random_ammo_kind(), randi_range(5, 15)), items, occupancy)
 	return items
 
 
@@ -96,6 +100,13 @@ static func loot_item(kind: int) -> Dictionary:
 	return {"glyph": data["glyph"], "color": data["color"], "item": kind}
 
 
+# A stack of ammo: same shape as loot_item plus an ammo_count the pickup splits into
+# individual inventory entries.
+static func ammo_item(kind: int, count: int) -> Dictionary:
+	var data: Dictionary = GameData.ITEMS[kind]
+	return {"glyph": data["glyph"], "color": data["color"], "item": kind, "ammo_count": count}
+
+
 static func random_weapon_kind() -> int:
 	var kinds: Array[int] = []
 	for kind in range(GameData.ITEMS.size()):
@@ -109,6 +120,24 @@ static func random_armor_kind() -> int:
 	var kinds: Array[int] = []
 	for kind in range(GameData.ITEMS.size()):
 		if GameData.is_armor(kind) or GameData.is_shield(kind):
+			kinds.append(kind)
+	var pick: int = kinds[randi() % kinds.size()]
+	return pick
+
+
+static func random_ranged_kind() -> int:
+	var kinds: Array[int] = []
+	for kind in range(GameData.ITEMS.size()):
+		if GameData.is_ranged(kind):
+			kinds.append(kind)
+	var pick: int = kinds[randi() % kinds.size()]
+	return pick
+
+
+static func random_ammo_kind() -> int:
+	var kinds: Array[int] = []
+	for kind in range(GameData.ITEMS.size()):
+		if GameData.is_ammo(kind):
 			kinds.append(kind)
 	var pick: int = kinds[randi() % kinds.size()]
 	return pick

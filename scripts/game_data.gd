@@ -71,6 +71,7 @@ const MONSTERS := [
 const COLOR_GOLD := Color(0.95, 0.85, 0.20)
 const COLOR_WEAPON := Color(0.70, 0.80, 0.85)
 const COLOR_ARMOR := Color(0.72, 0.60, 0.40)
+const COLOR_AMMO := Color(0.78, 0.72, 0.55)
 
 enum ItemKind {
 	HEALING_POTION,
@@ -80,6 +81,8 @@ enum ItemKind {
 	CLUB, QUARTERSTAFF, POLE_ARM, SPEAR,
 	LEATHER_ARMOR, CHAIN_MAIL, PLATE_MAIL,
 	SHIELD,
+	SHORTBOW, LONGBOW, LIGHT_CROSSBOW, SLING,
+	ARROW, BOLT, SLING_STONE,
 }
 
 # Indexed by ItemKind; the row order must match the enum above.
@@ -104,6 +107,24 @@ const ITEMS := [
 	{"name": "chain mail", "glyph": "[", "color": COLOR_ARMOR, "category": "armor", "ac": 15},
 	{"name": "plate mail", "glyph": "[", "color": COLOR_ARMOR, "category": "armor", "ac": 17},
 	{"name": "shield", "glyph": "[", "color": COLOR_ARMOR, "category": "shield"},
+	# Ranged launchers: occupy the weapon slot, fire matching ammo. dmg_n/dmg_d here
+	# is only the weak melee bash used if you bump a monster with the launcher in hand;
+	# the *ammo* carries the shot damage. `range` is the max line length in tiles.
+	{"name": "shortbow", "glyph": "}", "color": COLOR_WEAPON, "category": "ranged",
+		"ammo_type": "arrow", "range": 8, "dmg_n": 1, "dmg_d": 4, "two_handed": true},
+	{"name": "longbow", "glyph": "}", "color": COLOR_WEAPON, "category": "ranged",
+		"ammo_type": "arrow", "range": 12, "dmg_n": 1, "dmg_d": 4, "two_handed": true},
+	{"name": "light crossbow", "glyph": "}", "color": COLOR_WEAPON, "category": "ranged",
+		"ammo_type": "bolt", "range": 10, "dmg_n": 1, "dmg_d": 4, "two_handed": true},
+	{"name": "sling", "glyph": "}", "color": COLOR_WEAPON, "category": "ranged",
+		"ammo_type": "stone", "range": 6, "dmg_n": 1, "dmg_d": 2},
+	# Ammo: stacks in the inventory array (one entry per missile); the dice set shot damage.
+	{"name": "arrow", "glyph": "↑", "color": COLOR_AMMO, "category": "ammo",
+		"ammo_type": "arrow", "dmg_n": 1, "dmg_d": 6},
+	{"name": "bolt", "glyph": "↑", "color": COLOR_AMMO, "category": "ammo",
+		"ammo_type": "bolt", "dmg_n": 1, "dmg_d": 8},
+	{"name": "sling stone", "glyph": "↑", "color": COLOR_AMMO, "category": "ammo",
+		"ammo_type": "stone", "dmg_n": 1, "dmg_d": 4},
 ]
 
 static func is_potion(kind: int) -> bool:
@@ -120,6 +141,15 @@ static func is_shield(kind: int) -> bool:
 
 static func is_two_handed(kind: int) -> bool:
 	return ITEMS[kind].get("two_handed", false)
+
+static func is_ranged(kind: int) -> bool:
+	return ITEMS[kind].get("category", "") == "ranged"
+
+static func is_ammo(kind: int) -> bool:
+	return ITEMS[kind].get("category", "") == "ammo"
+
+static func ammo_type(kind: int) -> String:
+	return ITEMS[kind].get("ammo_type", "")
 
 static func get_tile_char(tile: int) -> String:
 	match tile:

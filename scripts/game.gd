@@ -48,9 +48,13 @@ var _awaiting_quaff := false
 var _awaiting_close := false
 var _awaiting_wield := false
 var _awaiting_wear := false
+var _awaiting_fire := false
+var _awaiting_fire_dir := false
 var _quaff_options: Array[int] = []
 var _wield_options: Array[int] = []
 var _wear_options: Array[int] = []
+var _fire_options: Array[int] = []
+var _fire_ammo_kind := -1
 var _create_bg: ColorRect
 var _create_label: RichTextLabel
 var _inv_bg: ColorRect
@@ -376,6 +380,8 @@ func _update_inv_label() -> void:
 
 	# Bucket distinct kinds by category, preserving inventory order.
 	var weapons: Array[int] = []
+	var ranged: Array[int] = []
+	var ammo: Array[int] = []
 	var armor: Array[int] = []
 	var potions: Array[int] = []
 	var other: Array[int] = []
@@ -387,6 +393,10 @@ func _update_inv_label() -> void:
 		seen[kind] = true
 		if GameData.is_weapon(kind):
 			weapons.append(kind)
+		elif GameData.is_ranged(kind):
+			ranged.append(kind)
+		elif GameData.is_ammo(kind):
+			ammo.append(kind)
 		elif GameData.is_armor(kind) or GameData.is_shield(kind):
 			armor.append(kind)
 		elif GameData.is_potion(kind):
@@ -395,11 +405,14 @@ func _update_inv_label() -> void:
 			other.append(kind)
 
 	t += _inv_section("Weapons", weapons)
+	t += _inv_section("Ranged", ranged)
+	t += _inv_section("Ammo", ammo)
 	t += _inv_section("Armor", armor)
 	t += _inv_section("Potions", potions)
 	t += _inv_section("Other", other)
 
-	if weapons.is_empty() and armor.is_empty() and potions.is_empty() and other.is_empty():
+	if weapons.is_empty() and ranged.is_empty() and ammo.is_empty() and armor.is_empty() \
+			and potions.is_empty() and other.is_empty():
 		t += "\n(carrying nothing)\n"
 
 	t += "\n[color=#888888]i to close[/color]"
@@ -432,6 +445,12 @@ func _inv_item_line(kind: int) -> String:
 		if db != 0:
 			dmg += "%+d" % db
 		line += "      [color=#999999]%+d to hit, %s dmg[/color]\n" % [hit, dmg]
+	elif GameData.is_ranged(kind):
+		var hit: int = _player.ranged_attack_bonus()
+		line += "      [color=#999999]%+d to hit, fires %ss, range %d[/color]\n" % \
+			[hit, data["ammo_type"], int(data["range"])]
+	elif GameData.is_ammo(kind):
+		line += "      [color=#999999]%dd%d dmg[/color]\n" % [int(data["dmg_n"]), int(data["dmg_d"])]
 	elif GameData.is_armor(kind):
 		line += "      [color=#999999]AC %d[/color]\n" % int(data["ac"])
 	elif GameData.is_shield(kind):
@@ -629,6 +648,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	if _awaiting_fire:
+		_handle_fire_input(event)
+		get_viewport().set_input_as_handled()
+		return
+
+	if _awaiting_fire_dir:
+		_handle_fire_dir_input(event)
+		get_viewport().set_input_as_handled()
+		return
+
 	if event.keycode == KEY_W:
 		if event.shift_pressed:
 			_try_wear()
@@ -656,6 +685,11 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if event.keycode == KEY_Q:
 		_try_quaff()
+		get_viewport().set_input_as_handled()
+		return
+
+	if event.keycode == KEY_F:
+		_try_fire()
 		get_viewport().set_input_as_handled()
 		return
 
@@ -738,7 +772,7 @@ func _try_wield() -> void:
 	var seen := {}
 	for k in _player.inventory:
 		var kind: int = k
-		if GameData.is_weapon(kind) and not seen.has(kind):
+		if (GameData.is_weapon(kind) or GameData.is_ranged(kind)) and not seen.has(kind):
 			seen[kind] = true
 			_wield_options.append(kind)
 	if _wield_options.is_empty():
@@ -768,6 +802,180 @@ func _do_wield_action(kind: int) -> void:
 		_add_message("You sling your shield to grip the %s with both hands." % iname)
 	_player.equipped_weapon = kind
 	_add_message("You wield the %s." % iname)
+
+
+# Fire: a two-step prompt (pick ammo, then a direction) mirroring the kick/quaff flow.
+func _try_fire() -> void:
+	var weapon: int = _player.equipped_weapon
+	if weapon < 0 or not GameData.is_ranged(weapon):
+		_add_message("You have no ranged weapon wielded.  (wield one with w)")
+		return
+	var want: String = GameData.ammo_type(weapon)
+	_fire_options.clear()
+	var seen := {}
+	for k in _player.inventory:
+		var kind: int = k
+		if GameData.is_ammo(kind) and GameData.ammo_type(kind) == want and not seen.has(kind):
+			seen[kind] = true
+			_fire_options.append(kind)
+	if _fire_options.is_empty():
+		_add_message("Your %s needs %ss, but you have none." % [GameData.ITEMS[weapon]["name"], want])
+		return
+	if _fire_options.size() == 1:
+		# Only one matching ammo type -- skip the picker and go straight to aiming.
+		_fire_ammo_kind = _fire_options[0]
+		_awaiting_fire_dir = true
+		_add_message("Fire the %s in which direction?" % GameData.ITEMS[_fire_ammo_kind]["name"])
+		return
+	_add_message(_selection_prompt("Fire which ammo?", _fire_options))
+	_awaiting_fire = true
+
+
+func _handle_fire_input(event: InputEvent) -> void:
+	_awaiting_fire = false
+	if event.keycode == KEY_ESCAPE:
+		_add_message("Never mind.")
+		return
+	var idx: int = event.keycode - KEY_A
+	if idx >= 0 and idx < _fire_options.size():
+		_fire_ammo_kind = _fire_options[idx]
+		_awaiting_fire_dir = true
+		_add_message("Fire the %s in which direction?" % GameData.ITEMS[_fire_ammo_kind]["name"])
+	else:
+		_add_message("Never mind.")
+
+
+func _handle_fire_dir_input(event: InputEvent) -> void:
+	_awaiting_fire_dir = false
+	if event.keycode == KEY_ESCAPE:
+		_add_message("Never mind.")
+		return
+	var dir := _dir_from_key(event.keycode)
+	if dir == Vector2i.ZERO:
+		_add_message("Never mind.")
+		return
+	_run_round(_do_fire_action.bind(_fire_ammo_kind, dir))
+
+
+# Walk a straight cardinal line from `start`, up to `max_range` tiles. Returns the
+# first monster struck (or null), the impact cell where the missile comes to rest
+# (last open cell on a block / range cap), and the path of open cells crossed.
+func _trace_shot(start: Vector2i, dir: Vector2i, max_range: int) -> Dictionary:
+	var path: Array[Vector2i] = []
+	var cell := start
+	for _i in range(max_range):
+		cell += dir
+		var tile: int = _dungeon.get_tile(cell.x, cell.y)
+		if not GameData.is_transparent(tile):
+			break  # wall / closed door / pillar / void stops the missile
+		path.append(cell)
+		if _monster_at.has(cell):
+			return {"monster": _monster_at[cell], "impact_cell": cell, "path": path}
+	var impact: Vector2i = path.back() if not path.is_empty() else start
+	return {"monster": null, "impact_cell": impact, "path": path}
+
+
+func _do_fire_action(ammo_kind: int, dir: Vector2i) -> void:
+	# Re-validate at execution time: a monster acting first may have changed the board.
+	var weapon: int = _player.equipped_weapon
+	if weapon < 0 or not GameData.is_ranged(weapon):
+		_add_message("You have no ranged weapon ready.")
+		return
+	if not _player.has_item(ammo_kind):
+		_add_message("You are out of %ss." % GameData.ammo_type(weapon))
+		return
+	_player.remove_item(ammo_kind)  # the missile is spent the moment it is loosed
+
+	var ammo_data: Dictionary = GameData.ITEMS[ammo_kind]
+	var aname: String = ammo_data["name"]
+	var max_range: int = int(GameData.ITEMS[weapon].get("range", 1))
+	var result := _trace_shot(_player.grid_pos, dir, max_range)
+	var m: Monster = result["monster"]
+
+	# Cosmetic streak flying to where the missile comes to rest (hit, miss, or whiff).
+	_spawn_projectile(_player.grid_pos, result["impact_cell"], ammo_data["color"])
+
+	if m == null:
+		_add_message("Your %s flies off into the dark." % aname)
+		_try_recover_ammo(ammo_kind, result["path"])
+		return
+
+	var mdata: Dictionary = GameData.MONSTERS[m.kind]
+	var mname: String = mdata["name"]
+	var target_ac: int = mdata["ac"]
+	var atk: int = _player.ranged_attack_bonus()
+	var fatigue: int = FATIGUE_PENALTY if _player.fatigued else 0
+	var d20 := randi_range(1, 20)
+	var total := d20 + atk - fatigue
+
+	var calc := "d20 %d %s" % [d20, TextFmt.signed(atk)]
+	if fatigue > 0:
+		calc += " %s" % TextFmt.signed(-fatigue)
+	calc += " = %d vs AC %d" % [total, target_ac]
+	var hit := total >= target_ac
+	if not hit:
+		_add_message("Your %s misses the %s." % [aname, mname])
+		_combat_panel.push_attack(
+			"You shoot at %s" % TextFmt.cap(mname), false, true, d20, calc, "", "")
+		_try_recover_ammo(ammo_kind, result["path"])
+		return
+
+	var dn := int(ammo_data["dmg_n"])
+	var dd := int(ammo_data["dmg_d"])
+	var base_dmg := GameData.roll(dn, dd)
+	var dmg := maxi(1, base_dmg)
+	var dline := "%s %dd%d = %d" % [aname, dn, dd, base_dmg]
+
+	m.hp -= dmg
+	_add_message("Your %s hits the %s for %d damage." % [aname, mname, dmg])
+	var hp_short := "slain" if m.hp <= 0 else "%d/%d" % [m.hp, m.max_hp]
+	_combat_panel.push_attack(
+		"You shoot %s" % TextFmt.cap(mname), true, true, d20, calc, dline, hp_short)
+	if m.hp <= 0:
+		_kill_monster(m, mname, int(mdata["xp"]))
+	else:
+		_check_half_hp_morale(m)
+
+
+# Fly a short cosmetic streak from one cell's center to another. Fast but notable:
+# the travel time scales with distance and is clamped so even long shots stay snappy.
+# Purely visual and non-blocking -- the turn has already resolved by the time it plays.
+func _spawn_projectile(from_cell: Vector2i, to_cell: Vector2i, color: Color) -> void:
+	var half := Vector2(GameData.CELL) * 0.5
+	var from: Vector2 = GameData.grid_to_world(from_cell) + half
+	var to: Vector2 = GameData.grid_to_world(to_cell) + half
+	var cells := absi(to_cell.x - from_cell.x) + absi(to_cell.y - from_cell.y)
+	var duration := clampf(cells * 0.03, 0.08, 0.22)
+	var p := Node2D.new()
+	p.set_script(load("res://scripts/projectile.gd"))
+	p.z_index = 11  # above the torchlight overlay (z=10) so the streak stays bright
+	add_child(p)
+	p.launch(from, to, color, duration)
+
+
+# A hit consumes the missile; a miss has a 50% chance to leave it recoverable.
+# It lands on the first cell that can hold it, scanning back from the impact toward
+# the player (so a shot that overshot a monster drops just short of it). If a free
+# cell can't be found, or the coin flip fails, the missile is lost.
+func _try_recover_ammo(ammo_kind: int, path: Array) -> void:
+	if randf() >= 0.5:
+		return
+	for i in range(path.size() - 1, -1, -1):
+		var cell: Vector2i = path[i]
+		if cell == _player.grid_pos or _monster_at.has(cell):
+			continue
+		if not GameData.is_passable(_dungeon.get_tile(cell.x, cell.y)):
+			continue
+		if _items_at.has(cell):
+			var existing: Dictionary = _items_at[cell]
+			if existing.get("item", -1) == ammo_kind:
+				existing["ammo_count"] = int(existing.get("ammo_count", 1)) + 1
+				_renderer.queue_redraw()
+				return
+			continue  # a different item already occupies this cell
+		_items_at[cell] = DungeonPopulator.ammo_item(ammo_kind, 1)
+		_renderer.queue_redraw()
+		return
 
 
 func _try_wear() -> void:
@@ -1132,6 +1340,12 @@ func _pickup_item(cell: Vector2i) -> void:
 		var amount: int = it["gold"]
 		_player.add_gold(amount)
 		_add_message("You pick up %d gold piece%s." % [amount, "" if amount == 1 else "s"])
+	elif it.has("ammo_count"):
+		var kind: int = it["item"]
+		var count: int = it["ammo_count"]
+		for _i in range(count):
+			_player.add_item(kind)
+		_add_message("You pick up %d %s%s." % [count, GameData.ITEMS[kind]["name"], "" if count == 1 else "s"])
 	else:
 		var kind: int = it["item"]
 		_player.add_item(kind)

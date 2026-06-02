@@ -153,6 +153,11 @@ func melee_attack_bonus() -> int:
 	return level + str_mod()
 
 
+func ranged_attack_bonus() -> int:
+	# Basic Fantasy: missile attacks use Dexterity instead of Strength.
+	return level + dex_mod()
+
+
 func damage_bonus() -> int:
 	return str_mod()
 
