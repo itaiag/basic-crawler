@@ -23,6 +23,7 @@ const REST_INTERRUPT_SAFE := 0.01
 const REST_INTERRUPT_OPEN := 0.15
 const FATIGUE_PENALTY := 2
 const KICK_ATK_PENALTY := 2  # Basic Fantasy: kicks rolled at -2 attack
+const DIAG_BUFFER := 0.05  # window to pair two arrow keys into a diagonal step
 
 var _dungeon := DungeonGenerator.new()
 var _turn := 1
@@ -50,6 +51,10 @@ var _awaiting_wield := false
 var _awaiting_wear := false
 var _awaiting_fire := false
 var _awaiting_fire_dir := false
+# Diagonal-from-two-arrows buffer. _pending_seq is a monotonic guard so a stale
+# buffer timer can't fire a cardinal after a diagonal already committed.
+var _pending_dir := Vector2i.ZERO
+var _pending_seq := 0
 var _quaff_options: Array[int] = []
 var _wield_options: Array[int] = []
 var _wear_options: Array[int] = []
@@ -328,7 +333,7 @@ func _begin_play() -> void:
 	_creating = false
 	_create_bg.visible = false
 	_add_message("Welcome to the dungeon, Adventurer the Human Fighter!")
-	_add_message("Commands: arrows move, k kick, c close door, i inventory, q quaff, w wield, W wear, R rest.")
+	_add_message("Commands: arrows move (two together or numpad 7/9/1/3 for diagonals), k kick, c close door, i inventory, q quaff, w wield, W wear, R rest.")
 	_add_message("Press ? or F1 anytime for the full command list.")
 	_add_message("[Debug] F5: new dungeon   F6: reveal map")
 	_update_status()
@@ -717,10 +722,63 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	_handle_move_key(event)
+
+
+# Routes movement keys. Numpad corners/cardinals move at once; the four ARROW keys
+# buffer briefly so two of them pressed together form a diagonal.
+func _handle_move_key(event: InputEvent) -> void:
 	var dir := _dir_from_key(event.keycode)
-	if dir != Vector2i.ZERO:
+	if dir == Vector2i.ZERO:
+		return
+	get_viewport().set_input_as_handled()
+	var is_arrow: bool = event.keycode in [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]
+	if not is_arrow:
 		_try_move(dir)
-		get_viewport().set_input_as_handled()
+		return
+	# A perpendicular arrow is already waiting -> pair them now.
+	if _pending_dir != Vector2i.ZERO and _pending_dir.x * dir.x + _pending_dir.y * dir.y == 0:
+		_commit_diagonal(_pending_dir + dir)
+		return
+	# Fast path: a perpendicular arrow is already physically held -> no wait.
+	var perp := _held_perpendicular(dir)
+	if perp != Vector2i.ZERO:
+		_commit_diagonal(dir + perp)
+		return
+	_start_pending(dir)
+
+
+func _commit_diagonal(d: Vector2i) -> void:
+	_pending_seq += 1  # invalidate any in-flight buffer timer
+	_pending_dir = Vector2i.ZERO
+	_try_move(Vector2i(clampi(d.x, -1, 1), clampi(d.y, -1, 1)))
+
+
+func _start_pending(dir: Vector2i) -> void:
+	_pending_dir = dir
+	_pending_seq += 1
+	var seq := _pending_seq
+	await get_tree().create_timer(DIAG_BUFFER).timeout
+	if seq == _pending_seq and _pending_dir != Vector2i.ZERO:
+		var d := _pending_dir
+		_pending_dir = Vector2i.ZERO
+		_try_move(d)
+
+
+# If an arrow on the axis perpendicular to `dir` is currently held, return its
+# cardinal vector (so it can be paired into a diagonal immediately); else ZERO.
+func _held_perpendicular(dir: Vector2i) -> Vector2i:
+	if dir.x != 0:  # horizontal -> look for a held vertical arrow
+		if Input.is_physical_key_pressed(KEY_UP):
+			return Vector2i(0, -1)
+		if Input.is_physical_key_pressed(KEY_DOWN):
+			return Vector2i(0, 1)
+	else:  # vertical -> look for a held horizontal arrow
+		if Input.is_physical_key_pressed(KEY_LEFT):
+			return Vector2i(-1, 0)
+		if Input.is_physical_key_pressed(KEY_RIGHT):
+			return Vector2i(1, 0)
+	return Vector2i.ZERO
 
 
 func _dir_from_key(keycode: int) -> Vector2i:
@@ -732,6 +790,14 @@ func _dir_from_key(keycode: int) -> Vector2i:
 		return Vector2i(-1, 0)
 	elif keycode in [KEY_RIGHT, KEY_KP_6]:
 		return Vector2i(1, 0)
+	elif keycode == KEY_KP_7:
+		return Vector2i(-1, -1)
+	elif keycode == KEY_KP_9:
+		return Vector2i(1, -1)
+	elif keycode == KEY_KP_1:
+		return Vector2i(-1, 1)
+	elif keycode == KEY_KP_3:
+		return Vector2i(1, 1)
 	return Vector2i.ZERO
 
 
@@ -872,6 +938,9 @@ func _handle_fire_dir_input(event: InputEvent) -> void:
 	var dir := _dir_from_key(event.keycode)
 	if dir == Vector2i.ZERO:
 		_add_message("Never mind.")
+		return
+	if dir.x != 0 and dir.y != 0:
+		_add_message("You can only fire in a cardinal direction.")
 		return
 	_run_round(_do_fire_action.bind(_fire_ammo_kind, dir))
 
@@ -1055,6 +1124,12 @@ func _selection_prompt(label: String, options: Array[int]) -> String:
 func _try_move(dir: Vector2i) -> void:
 	var target: Vector2i = _player.grid_pos + dir
 	if target.x < 0 or target.y < 0 or target.x >= GameData.MAP_W or target.y >= GameData.MAP_H:
+		return
+
+	# Block diagonal corner-cuts (between two walls / through a doorway) -- silent,
+	# like a wall bump, and no turn spent. Terrain is static within a round, so
+	# checking here (not in _do_move_action) is sufficient, matching PILLAR/locked.
+	if dir.x != 0 and dir.y != 0 and not GameData.diagonal_clear(_dungeon, _player.grid_pos, dir):
 		return
 
 	# Attacking, opening, and walking all cost a turn -> run a full round.
@@ -1510,18 +1585,23 @@ func _monster_take_turn(m: Monster) -> void:
 	if not _last_visible.has(m.grid_pos):
 		return
 	var to_player: Vector2i = _player.grid_pos - m.grid_pos
-	var dist := absi(to_player.x) + absi(to_player.y)
+	# Chebyshev distance: diagonal neighbors count as adjacent now that monsters move
+	# diagonally. A diagonal melee is only allowed when the corner is clear, mirroring
+	# the player's own corner-cut gate.
+	var dist := maxi(absi(to_player.x), absi(to_player.y))
+	var can_melee: bool = dist <= 1 and (to_player.x == 0 or to_player.y == 0 \
+		or GameData.diagonal_clear(_dungeon, m.grid_pos, Vector2i(signi(to_player.x), signi(to_player.y))))
 
 	if m.fleeing:
 		var flee := MonsterAI.flee_step(m.grid_pos, to_player, _dungeon, _monster_at, _player.grid_pos)
 		if flee != Vector2i.ZERO:
 			_move_monster(m, flee)
-		elif dist <= 1:
+		elif can_melee:
 			# Cornered with nowhere to run -> it turns and fights.
 			_monster_attack(m)
 		return
 
-	if dist <= 1:
+	if can_melee:
 		_monster_attack(m)
 		return
 	var step := MonsterAI.chase_step(m.grid_pos, to_player, _dungeon, _monster_at, _player.grid_pos)

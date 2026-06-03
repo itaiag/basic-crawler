@@ -193,6 +193,22 @@ static func is_pillar(tile: int) -> bool:
 static func is_door(tile: int) -> bool:
 	return tile in [Tile.DOOR_CLOSED, Tile.DOOR_LOCKED, Tile.DOOR_OPEN]
 
+# A diagonal step is legal only if it isn't squeezing between two blocked corners
+# and neither end is a doorway. `dir` must be diagonal (both components nonzero);
+# orthogonal moves are never corner-cuts. `dungeon` is duck-typed (needs get_tile).
+static func diagonal_clear(dungeon, from: Vector2i, dir: Vector2i) -> bool:
+	if dir.x == 0 or dir.y == 0:
+		return true
+	var from_t: int = dungeon.get_tile(from.x, from.y)
+	var dest_t: int = dungeon.get_tile(from.x + dir.x, from.y + dir.y)
+	if is_door(from_t) or is_door(dest_t):
+		return false  # no diagonal into/out of a doorway
+	var side_h: int = dungeon.get_tile(from.x + dir.x, from.y)
+	var side_v: int = dungeon.get_tile(from.x, from.y + dir.y)
+	if not is_passable(side_h) and not is_passable(side_v):
+		return false  # both flanking corners blocked -> can't squeeze through
+	return true
+
 static func grid_to_world(grid_pos: Vector2i) -> Vector2:
 	return Vector2(grid_pos.x * CELL.x, grid_pos.y * CELL.y)
 

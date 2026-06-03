@@ -95,7 +95,8 @@ func is_open() -> bool:
 func _help_text() -> String:
 	var t := "[center][b]COMMANDS[/b][/center]\n\n"
 	t += "[b]Movement[/b]\n"
-	t += "  Arrows / numpad 8 2 4 6   Move\n"
+	t += "  Arrows / numpad 8 2 4 6   Move (4-way)\n"
+	t += "  Numpad 7 9 1 3 / 2 arrows Move diagonally\n"
 	t += "  (into a monster)          Attack\n"
 	t += "  (into a closed door)      Open\n\n"
 	t += "[b]Actions[/b]\n"
