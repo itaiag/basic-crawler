@@ -270,10 +270,11 @@ func _setup_side_panel() -> void:
 
 	_inv_label = RichTextLabel.new()
 	_inv_label.bbcode_enabled = true
-	_inv_label.scroll_active = false
+	# Scrollable so long inventories aren't clipped (up/down/PageUp/Down or wheel).
+	_inv_label.scroll_active = true
 	_inv_label.position = Vector2.ZERO
 	_inv_label.size = Vector2(RIGHT_PANEL_W, panel_h)
-	_inv_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_inv_label.mouse_filter = Control.MOUSE_FILTER_STOP
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.04, 0.04, 0.04)
 	style.border_color = Color(0.32, 0.32, 0.32)
@@ -389,6 +390,33 @@ func _open_inventory() -> void:
 	_inventory_open = true
 	_update_inv_label()
 	_inv_bg.visible = true
+	_inv_label.get_v_scroll_bar().value = 0
+
+
+# Scroll the open inventory; returns true if the key was a scroll key (kept open).
+func _scroll_inventory(event: InputEventKey) -> bool:
+	var sb := _inv_label.get_v_scroll_bar()
+	var line_step := 28.0
+	match event.keycode:
+		KEY_UP, KEY_KP_8:
+			sb.value -= line_step
+			return true
+		KEY_DOWN, KEY_KP_2:
+			sb.value += line_step
+			return true
+		KEY_PAGEUP:
+			sb.value -= sb.page
+			return true
+		KEY_PAGEDOWN:
+			sb.value += sb.page
+			return true
+		KEY_HOME:
+			sb.value = 0
+			return true
+		KEY_END:
+			sb.value = sb.max_value
+			return true
+	return false
 
 
 func _update_inv_label() -> void:
@@ -432,7 +460,7 @@ func _update_inv_label() -> void:
 			and potions.is_empty() and other.is_empty():
 		t += "\n(carrying nothing)\n"
 
-	t += "\n[color=#888888]i to close[/color]"
+	t += "\n[color=#888888]up/down or wheel to scroll  -  i to close[/color]"
 	_inv_label.text = t
 
 
@@ -629,6 +657,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 
 	if _inventory_open:
+		if _scroll_inventory(event):
+			get_viewport().set_input_as_handled()
+			return
 		_inventory_open = false
 		_inv_bg.visible = false
 		get_viewport().set_input_as_handled()
