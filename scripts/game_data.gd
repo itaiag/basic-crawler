@@ -26,6 +26,8 @@ const COLOR_FLOOR_BG := Color(0.12, 0.12, 0.14)  # dark stone fill for room floo
 const COLOR_CORRIDOR := Color(0.21, 0.18, 0.15)  # dark earthy tunnel; drawn as a narrow core with a darker edge
 const COLOR_DOOR := Color(0.52, 0.37, 0.18)  # muted wood, not neon yellow
 const COLOR_STAIRS := Color.WHITE
+const COLOR_STAIRS_DOWN := Color(0.95, 0.75, 0.35)  # warm amber: deeper / more danger
+const COLOR_STAIRS_UP := Color(0.55, 0.85, 0.95)  # cool cyan: the way back up
 const COLOR_PILLAR := Color(0.26, 0.26, 0.31)  # cool stone column, distinct from warm walls
 
 # Dark token drawn behind glyphs (player, monsters).
@@ -170,7 +172,8 @@ static func get_tile_color(tile: int) -> Color:
 		Tile.FLOOR: return COLOR_FLOOR
 		Tile.CORRIDOR: return COLOR_CORRIDOR
 		Tile.DOOR_CLOSED, Tile.DOOR_LOCKED, Tile.DOOR_OPEN: return COLOR_DOOR
-		Tile.STAIRS_DOWN, Tile.STAIRS_UP: return COLOR_STAIRS
+		Tile.STAIRS_DOWN: return COLOR_STAIRS_DOWN
+		Tile.STAIRS_UP: return COLOR_STAIRS_UP
 		Tile.PILLAR: return COLOR_PILLAR
 	return Color.BLACK
 

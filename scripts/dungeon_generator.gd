@@ -101,6 +101,15 @@ func get_start_pos() -> Vector2i:
 	return first.position + first.size / 2
 
 
+# Location of the down-stairs (`>`) -- mirrors the placement in generate() at the
+# centre of the last room. Used as the arrival cell when ascending from below.
+func get_down_stairs_pos() -> Vector2i:
+	if rooms.size() < 2:
+		return get_start_pos()
+	var last: Rect2i = rooms.back()
+	return last.position + last.size / 2
+
+
 func room_index_at(pos: Vector2i) -> int:
 	for i in range(rooms.size()):
 		var r: Rect2i = rooms[i]

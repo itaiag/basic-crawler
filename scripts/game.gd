@@ -26,6 +26,10 @@ const KICK_ATK_PENALTY := 2  # Basic Fantasy: kicks rolled at -2 attack
 const DIAG_BUFFER := 0.05  # window to pair two arrow keys into a diagonal step
 
 var _dungeon := DungeonGenerator.new()
+var _depth := 1  # current dungeon level (1 = top / entrance)
+# Visited levels, persisted so climbing back returns a level exactly as it was
+# left. Maps depth (int) -> snapshot Dictionary (see _capture_level).
+var _levels: Dictionary = {}
 var _turn := 1
 var _combat_zoom_active := false
 var _camera_zoom_tween: Tween
@@ -722,6 +726,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	# Stairs. Shifted '.'/',' may arrive as KEY_GREATER/KEY_LESS or as the base
+	# key with shift held, depending on layout -- accept both.
+	if event.keycode == KEY_GREATER or (event.keycode == KEY_PERIOD and event.shift_pressed):
+		_try_descend()
+		get_viewport().set_input_as_handled()
+		return
+
+	if event.keycode == KEY_LESS or (event.keycode == KEY_COMMA and event.shift_pressed):
+		_try_ascend()
+		get_viewport().set_input_as_handled()
+		return
+
 	_handle_move_key(event)
 
 
@@ -1170,9 +1186,9 @@ func _do_move_action(dir: Vector2i) -> void:
 		if _items_at.has(target):
 			_pickup_item(target)
 		if tile == GameData.Tile.STAIRS_DOWN:
-			_add_message("There is a staircase down here.")
+			_add_message("There is a staircase down here.  Press > to descend.")
 		elif tile == GameData.Tile.STAIRS_UP:
-			_add_message("There is a staircase up here.")
+			_add_message("There is a staircase up here.  Press < to ascend.")
 
 
 func _do_kick_action(dir: Vector2i) -> void:
@@ -1365,10 +1381,9 @@ func _update_fov() -> void:
 
 
 func _regenerate() -> void:
-	_dungeon.generate(GameData.MAP_W, GameData.MAP_H)
-	_renderer.dungeon = _dungeon
-	_renderer.visible_cells.clear()
-	_renderer.explored_cells.clear()
+	# Full new game: drop every cached level and start a fresh single-level run.
+	_depth = 1
+	_levels.clear()
 	_awaiting_kick = false
 	_awaiting_quaff = false
 	_awaiting_close = false
@@ -1378,11 +1393,111 @@ func _regenerate() -> void:
 	_end_encounter()  # no stale initiative carried into the new dungeon
 	_turn = 1
 	_player_alive = true
+	_build_new_level()
 	_player.place_at(_dungeon.get_start_pos())
-	_spawn_monsters()
-	_spawn_items()
 	_update_fov()
 	_enter_creation()
+
+
+# Generate a fresh level for the current _depth. Always builds a NEW generator
+# instance so any cached (previously visited) level is left untouched.
+func _build_new_level() -> void:
+	_dungeon = DungeonGenerator.new()
+	_dungeon.generate(GameData.MAP_W, GameData.MAP_H)
+	_renderer.dungeon = _dungeon
+	_renderer.visible_cells.clear()
+	_renderer.explored_cells.clear()
+	_spawn_monsters()
+	_spawn_items()
+
+
+# Snapshot the current level so it can be restored exactly when revisited.
+func _capture_level() -> Dictionary:
+	var mons: Array = []
+	for m in _monsters:
+		mons.append({
+			"kind": m.kind,
+			"cell": m.grid_pos,
+			"hp": m.hp,
+			"max_hp": m.max_hp,
+			"fleeing": m.fleeing,
+			"morale_checked": m.morale_checked,
+		})
+	return {
+		"dungeon": _dungeon,
+		"monsters": mons,
+		"items": _items_at.duplicate(true),
+		"explored": _renderer.explored_cells.duplicate(),
+	}
+
+
+# Restore a previously captured level snapshot as the live level.
+func _restore_level(state: Dictionary) -> void:
+	_dungeon = state["dungeon"]
+	_renderer.dungeon = _dungeon
+	_renderer.visible_cells.clear()
+	_renderer.explored_cells.clear()
+	_renderer.explored_cells.merge(state["explored"])
+	_clear_monsters()
+	for ms in state["monsters"]:
+		var m := _add_monster(ms["kind"], ms["cell"])
+		m.hp = ms["hp"]
+		m.max_hp = ms["max_hp"]
+		m.fleeing = ms["fleeing"]
+		m.morale_checked = ms["morale_checked"]
+	# Refill _items_at in place -- the renderer holds it by reference (see _ready).
+	_items_at.clear()
+	_items_at.merge(state["items"], true)
+	_renderer.queue_redraw()
+
+
+func _try_descend() -> void:
+	var tile: int = _dungeon.get_tile(_player.grid_pos.x, _player.grid_pos.y)
+	if tile != GameData.Tile.STAIRS_DOWN:
+		_add_message("There are no stairs down here.")
+		return
+	_descend()
+
+
+func _try_ascend() -> void:
+	var tile: int = _dungeon.get_tile(_player.grid_pos.x, _player.grid_pos.y)
+	if tile != GameData.Tile.STAIRS_UP:
+		_add_message("There are no stairs up here.")
+		return
+	if _depth <= 1:
+		_add_message("You stand at the dungeon entrance; there is no way further up.")
+		return
+	_ascend()
+
+
+func _descend() -> void:
+	_levels[_depth] = _capture_level()
+	_depth += 1
+	if _levels.has(_depth):
+		_restore_level(_levels[_depth])
+	else:
+		_build_new_level()
+	# Arriving from above, you step in at this level's up-stairs (the way back).
+	_player.place_at(_dungeon.get_start_pos())
+	_end_encounter()
+	_reset_combat_zoom()
+	_add_message("You descend to dungeon level %d." % _depth)
+	_update_fov()
+	_update_status()
+
+
+func _ascend() -> void:
+	_levels[_depth] = _capture_level()
+	_depth -= 1
+	# The level above was visited to get here, so it is always cached.
+	_restore_level(_levels[_depth])
+	# Arriving from below, you step in at this level's down-stairs.
+	_player.place_at(_dungeon.get_down_stairs_pos())
+	_end_encounter()
+	_reset_combat_zoom()
+	_add_message("You climb up to dungeon level %d." % _depth)
+	_update_fov()
+	_update_status()
 
 
 func _toggle_reveal() -> void:
@@ -1398,18 +1513,19 @@ func _toggle_reveal() -> void:
 
 func _spawn_monsters() -> void:
 	_clear_monsters()
-	for spawn in DungeonPopulator.roll_monsters(_dungeon, _monster_at):
+	for spawn in DungeonPopulator.roll_monsters(_dungeon, _monster_at, _depth):
 		var kind: int = spawn["kind"]
 		var cell: Vector2i = spawn["cell"]
 		_add_monster(kind, cell)
 
 
-func _add_monster(kind: int, cell: Vector2i) -> void:
+func _add_monster(kind: int, cell: Vector2i) -> Monster:
 	var m := Monster.new()
 	m.setup(kind, cell)
 	add_child(m)
 	_monsters.append(m)
 	_monster_at[cell] = m
+	return m
 
 
 func _clear_monsters() -> void:
@@ -1423,7 +1539,7 @@ func _spawn_items() -> void:
 	# The renderer holds _items_at by reference (set once in _ready), so refill the
 	# existing dict in place rather than rebinding it.
 	_items_at.clear()
-	_items_at.merge(DungeonPopulator.roll_items(_dungeon, _monster_at), true)
+	_items_at.merge(DungeonPopulator.roll_items(_dungeon, _monster_at, _depth), true)
 	_renderer.queue_redraw()
 
 
@@ -1686,8 +1802,8 @@ func _update_status() -> void:
 		hp_col = "#d05a5a"
 	elif hp_ratio <= 0.66:
 		hp_col = "#d0c060"
-	var line2 := "$:[color=#d8b020]%d[/color]  HP:[color=%s]%d[/color](%d)  Pw:0(0)  AC:[color=#7fb0c8]%d[/color]  Exp:[color=#b08fd0]%d/%d[/color]  T:%d" % [
-		gold, hp_col, maxi(0, hp), max_hp, ac, lvl, xp, _turn]
+	var line2 := "$:[color=#d8b020]%d[/color]  HP:[color=%s]%d[/color](%d)  Pw:0(0)  AC:[color=#7fb0c8]%d[/color]  Exp:[color=#b08fd0]%d/%d[/color]  DLvl:[color=#c8a850]%d[/color]  T:%d" % [
+		gold, hp_col, maxi(0, hp), max_hp, ac, lvl, xp, _depth, _turn]
 	if fatigued:
 		line2 += "  [color=#d08040]Fatigued(-%d to hit)[/color]" % FATIGUE_PENALTY
 	_status.append_text(line2)

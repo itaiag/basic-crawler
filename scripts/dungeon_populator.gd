@@ -6,15 +6,18 @@ class_name DungeonPopulator extends RefCounted
 # game state.
 
 
-# Roll monster placements: 0-2 per room (skipping the start room, index 0).
+# Roll monster placements per room (skipping the start room, index 0).
 # Returns [{ "kind": int, "cell": Vector2i }, ...]. A local copy of the occupancy
 # is grown as cells are chosen so two monsters never land on the same tile.
-static func roll_monsters(dungeon, occupancy: Dictionary) -> Array[Dictionary]:
+# `depth` (1 = top level) gently raises the per-room count cap so deeper levels
+# are busier -- this is the tuning hook for the richer difficulty work to come.
+static func roll_monsters(dungeon, occupancy: Dictionary, depth := 1) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	var taken: Dictionary = occupancy.duplicate()
+	var hi := 2 + int((depth - 1) / 2)  # 0-2 on L1/L2, 0-3 on L3/L4, ...
 	for ri in range(1, dungeon.rooms.size()):
 		var room: Rect2i = dungeon.rooms[ri]
-		var n := randi_range(0, 2)
+		var n := randi_range(0, hi)
 		for _k in range(n):
 			var cell := random_floor_cell(dungeon, room, taken)
 			if cell.x < 0:
@@ -27,7 +30,9 @@ static func roll_monsters(dungeon, occupancy: Dictionary) -> Array[Dictionary]:
 
 # Roll item placements across every room. Returns Vector2i -> item dict. Monsters
 # are expected to be spawned already (passed via occupancy) so items avoid them.
-static func roll_items(dungeon, occupancy: Dictionary) -> Dictionary:
+# `depth` is threaded through for future depth-based loot tuning; rates are flat
+# for now.
+static func roll_items(dungeon, occupancy: Dictionary, _depth := 1) -> Dictionary:
 	var items: Dictionary = {}
 	for ri in range(dungeon.rooms.size()):
 		var room: Rect2i = dungeon.rooms[ri]
